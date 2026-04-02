@@ -135,9 +135,57 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'category:listByBudget',
+  (_event, args: { budgetId: number }) => {
+    return CategoryRepository.listByBudget(args.budgetId);
+  },
+);
+
+ipcMain.handle(
+  'category:updateColor',
+  (
+    _event,
+    args: {
+      id: number;
+      color: string;
+      budgetId: number;
+    },
+  ) => {
+    return CategoryRepository.updateColor(args);
+  },
+);
+
+ipcMain.handle(
+  'subcategory:create',
+  (
+    _event,
+    args: {
+      budgetId: number;
+      parentCategoryId: number | null;
+      label: string;
+      targetPercent?: number | null;
+      targetAmount?: number | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
+      isFlexible: boolean;
+      sortOrder?: number;
+    },
+  ) => {
+    return CategoryRepository.createSubcategory(args);
+  },
+);
+
+ipcMain.handle(
   'transaction:listByBudget',
   (_event, args: { profileId: number; budgetId: number | null }) => {
     return TransactionRepository.listByBudget(args.profileId, args.budgetId);
+  },
+);
+
+ipcMain.handle(
+  'transaction:listUnexpected',
+  (_event, args: { profileId: number; budgetId: number }) => {
+    return TransactionRepository.listUnexpected(args.profileId, args.budgetId);
   },
 );
 
@@ -310,5 +358,22 @@ ipcMain.handle(
     },
   ) => {
     return GoalRepository.create(args);
+  },
+);
+
+ipcMain.handle(
+  'transaction:createManual',
+  (
+    _event,
+    args: {
+      profileId: number;
+      budgetId: number;
+      subcategoryId: number | null;
+      date: string;
+      amount: number;
+      description?: string | null;
+    },
+  ) => {
+    return TransactionRepository.createManual(args);
   },
 );

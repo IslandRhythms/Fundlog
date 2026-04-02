@@ -5,11 +5,13 @@ import type {
   Transaction,
   Goal,
   Receipt,
+  BudgetCategory,
+  BudgetSubcategory,
 } from './shared/types';
 
 type Theme = 'light' | 'dark' | 'system';
 
-const api = {
+export const api = {
   theme: {
     get: async (): Promise<Theme> => {
       return ipcRenderer.invoke('theme:get');
@@ -37,12 +39,49 @@ const api = {
       ruleSet: string;
     }): Promise<Budget> => ipcRenderer.invoke('budget:create', input),
   },
+  category: {
+    listByBudget: async (
+      budgetId: number,
+    ): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
+      ipcRenderer.invoke('category:listByBudget', { budgetId }),
+    updateColor: async (input: {
+      id: number;
+      color: string;
+      budgetId: number;
+    }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
+      ipcRenderer.invoke('category:updateColor', input),
+  },
+  subcategory: {
+    create: async (input: {
+      budgetId: number;
+      parentCategoryId: number | null;
+      label: string;
+      targetPercent?: number | null;
+      targetAmount?: number | null;
+      isFlexible: boolean;
+      sortOrder?: number;
+    }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
+      ipcRenderer.invoke('subcategory:create', input),
+  },
   transaction: {
     listByBudget: async (
       profileId: number,
       budgetId: number | null,
     ): Promise<Transaction[]> =>
       ipcRenderer.invoke('transaction:listByBudget', { profileId, budgetId }),
+    listUnexpected: async (
+      profileId: number,
+      budgetId: number,
+    ): Promise<Transaction[]> =>
+      ipcRenderer.invoke('transaction:listUnexpected', { profileId, budgetId }),
+    createManual: async (input: {
+      profileId: number;
+      budgetId: number;
+      subcategoryId: number | null;
+      date: string;
+      amount: number;
+      description?: string | null;
+    }): Promise<Transaction> => ipcRenderer.invoke('transaction:createManual', input),
   },
   goal: {
     listByProfile: async (profileId: number): Promise<Goal[]> =>

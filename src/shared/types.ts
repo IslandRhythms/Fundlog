@@ -39,6 +39,8 @@ export interface BudgetSubcategory {
   label: string;
   targetPercent: number | null;
   targetAmount: number | null;
+  minAmount?: number | null;
+  maxAmount?: number | null;
   isFlexible: number;
   sortOrder: number;
 }

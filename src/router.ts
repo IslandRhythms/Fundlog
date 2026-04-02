@@ -5,6 +5,7 @@ import TransactionsView from './views/TransactionsView.vue';
 import GoalsView from './views/GoalsView.vue';
 import ImportExportView from './views/ImportExportView.vue';
 import SettingsView from './views/SettingsView.vue';
+import ExpensesView from './views/ExpensesView.vue';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
@@ -12,6 +13,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/budgets', component: BudgetsView },
   { path: '/transactions', component: TransactionsView },
   { path: '/goals', component: GoalsView },
+  { path: '/expenses', component: ExpensesView },
   { path: '/import-export', component: ImportExportView },
   { path: '/settings', component: SettingsView },
 ];

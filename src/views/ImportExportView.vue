@@ -107,56 +107,63 @@ async function doExport() {
 </script>
 
 <template>
-  <div class="view import-export-view">
-    <h2>Import / Export</h2>
-    <p class="view-intro">
+  <div class="view import-export-view container-fluid">
+    <h2 class="mb-2">Import / Export</h2>
+    <p class="view-intro mb-4">
       Import transactions from CSV or export your current transactions as a CSV file.
     </p>
 
-    <div class="import-export-grid">
-      <section class="card">
-        <h3>Import CSV</h3>
-        <p class="hint">
-          Paste a CSV where the first row is a header containing at least
-          <code>date</code> and <code>amount</code> columns.
-        </p>
-        <textarea
-          v-model="rawCsv"
-          class="csv-textarea"
-          rows="10"
-          placeholder="date,amount,description,merchant&#10;2025-01-01,12.34,Coffee,Local Cafe"
-        />
-        <button
-          type="button"
-          class="primary-button"
-          :disabled="!canImport"
-          @click="doImport"
-        >
-          Import into current budget
-        </button>
-        <p v-if="importStatus" class="status-text">
-          {{ importStatus }}
-        </p>
-      </section>
-
-      <section class="card">
-        <h3>Export CSV</h3>
-        <p class="hint">
-          Export transactions for the active profile
-          <span v-if="domain.activeBudget">and current budget</span>.
-        </p>
-        <button
-          type="button"
-          class="secondary-button"
-          :disabled="!canExport"
-          @click="doExport"
-        >
-          Download CSV
-        </button>
-        <p v-if="exportStatus" class="status-text">
-          {{ exportStatus }}
-        </p>
-      </section>
+    <div class="row g-3">
+      <div class="col-lg-7">
+        <section class="card h-100">
+          <div class="card-body">
+            <h3 class="h5 card-title">Import CSV</h3>
+            <p class="small text-muted mb-2">
+              Paste a CSV where the first row is a header containing at least
+              <code>date</code> and <code>amount</code> columns.
+            </p>
+            <textarea
+              v-model="rawCsv"
+              class="form-control mb-2"
+              rows="10"
+              placeholder="date,amount,description,merchant&#10;2025-01-01,12.34,Coffee,Local Cafe"
+            />
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="!canImport"
+              @click="doImport"
+            >
+              Import into current budget
+            </button>
+            <p v-if="importStatus" class="status-text mt-2">
+              {{ importStatus }}
+            </p>
+          </div>
+        </section>
+      </div>
+      <div class="col-lg-5">
+        <section class="card h-100">
+          <div class="card-body">
+            <h3 class="h5 card-title">Export CSV</h3>
+            <p class="small text-muted">
+              Export transactions for the active profile
+              <span v-if="domain.activeBudget">and current budget</span>.
+            </p>
+            <button
+              type="button"
+              class="btn btn-outline-secondary"
+              :disabled="!canExport"
+              @click="doExport"
+            >
+              Download CSV
+            </button>
+            <p v-if="exportStatus" class="status-text mt-2">
+              {{ exportStatus }}
+            </p>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 </template>

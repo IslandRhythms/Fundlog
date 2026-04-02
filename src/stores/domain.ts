@@ -147,7 +147,7 @@ export const useDomainStore = defineStore('domain', {
           profileId: this.activeProfileId,
           ...input,
         });
-        this.goals.push(goal);
+        this.goals.unshift(goal);
         toast.success('Goal created.');
       } catch (err) {
         console.error(err);

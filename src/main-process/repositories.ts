@@ -152,6 +152,7 @@ export const CategoryRepository = {
       .prepare(
         `SELECT id, budget_id AS budgetId, parent_category_id AS parentCategoryId,
                 label, target_percent AS targetPercent, target_amount AS targetAmount,
+                min_amount AS minAmount, max_amount AS maxAmount,
                 is_flexible AS isFlexible, sort_order AS sortOrder
          FROM budget_subcategories
          WHERE budget_id = ?
@@ -160,6 +161,45 @@ export const CategoryRepository = {
       .all(budgetId) as BudgetSubcategory[];
 
     return { categories, subcategories };
+  },
+  updateColor(input: { id: number; color: string; budgetId: number }) {
+    db()
+      .prepare(
+        `UPDATE budget_categories
+         SET color = @color
+         WHERE id = @id`,
+      )
+      .run({ id: input.id, color: input.color });
+    return this.listByBudget(input.budgetId);
+  },
+  createSubcategory(input: {
+    budgetId: number;
+    parentCategoryId: number | null;
+    label: string;
+    targetPercent?: number | null;
+    targetAmount?: number | null;
+    minAmount?: number | null;
+    maxAmount?: number | null;
+    isFlexible: boolean;
+    sortOrder?: number;
+  }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
+    const stmt = db().prepare(
+      `INSERT INTO budget_subcategories
+       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, sort_order)
+       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @sortOrder)`
+    );
+    stmt.run({
+      budgetId: input.budgetId,
+      parentCategoryId: input.parentCategoryId,
+      label: input.label,
+      targetPercent: input.targetPercent ?? null,
+      targetAmount: input.isFlexible ? null : input.targetAmount ?? null,
+      minAmount: input.isFlexible ? input.minAmount ?? null : null,
+      maxAmount: input.isFlexible ? input.maxAmount ?? null : null,
+      isFlexible: input.isFlexible ? 1 : 0,
+      sortOrder: input.sortOrder ?? 99,
+    });
+    return this.listByBudget(input.budgetId);
   },
 };
 
@@ -183,6 +223,19 @@ export const TransactionRepository = {
     return db()
       .prepare(stmt)
       .all(budgetId ? [profileId, budgetId] : [profileId]) as Transaction[];
+  },
+  listUnexpected(profileId: number, budgetId: number): Transaction[] {
+    return db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, merchant,
+                description, source, goal_id AS goalId,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM transactions
+         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
+         ORDER BY date DESC, created_at DESC`,
+      )
+      .all(profileId, budgetId) as Transaction[];
   },
   createBulk(input: {
     profileId: number;
@@ -215,6 +268,41 @@ export const TransactionRepository = {
     });
     tx();
     return this.listByBudget(input.profileId, input.budgetId);
+  },
+  createManual(input: {
+    profileId: number;
+    budgetId: number;
+    subcategoryId: number | null;
+    date: string;
+    amount: number;
+    description?: string | null;
+  }): Transaction {
+    const createdAt = now();
+    const stmt = db().prepare(
+      `INSERT INTO transactions
+       (profile_id, budget_id, subcategory_id, date, amount, merchant, description, source, goal_id, created_at, updated_at)
+       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, NULL, @description, 'manual', NULL, @createdAt, @createdAt)`,
+    );
+    const result = stmt.run({
+      profileId: input.profileId,
+      budgetId: input.budgetId,
+      subcategoryId: input.subcategoryId,
+      date: input.date,
+      amount: input.amount,
+      description: input.description ?? null,
+      createdAt,
+    });
+    const id = Number(result.lastInsertRowid);
+    return db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, merchant,
+                description, source, goal_id AS goalId,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM transactions
+         WHERE id = ?`,
+      )
+      .get(id) as Transaction;
   },
 };
 

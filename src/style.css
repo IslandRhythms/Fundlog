@@ -1,8 +1,15 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
+  /* Base theme variables (light by default) */
+  --text: #212529;
+  --text-h: #111827;
+  --bg: #f8f9fa;
+  --shell-bg: #e5e7eb;
   --border: #e5e4e7;
+  --card-bg: #ffffff;
+  --card-text: #111827;
+  --card-border: #dee2e6;
+  --muted: #6b7280;
+  --status-text: #4b5563;
   --code-bg: #f4f3ec;
   --accent: #aa3bff;
   --accent-bg: rgba(170, 59, 255, 0.1);
@@ -31,17 +38,23 @@
 }
 
 [data-theme='dark'] {
-  --text: #9ca3af;
-  --text-h: #f3f4f6;
-  --bg: #16171d;
-  --border: #2e303a;
-  --code-bg: #1f2028;
-  --accent: #c084fc;
-  --accent-bg: rgba(192, 132, 252, 0.15);
-  --accent-border: rgba(192, 132, 252, 0.5);
-  --social-bg: rgba(47, 48, 58, 0.5);
+  --text: #e5e7eb;
+  --text-h: #f9fafb;
+  --bg: #020617;
+  --shell-bg: #020617;
+  --border: #1f2933;
+  --card-bg: #020617;
+  --card-text: #e5e7eb;
+  --card-border: #111827;
+  --muted: #9ca3af;
+  --status-text: #e5e7eb;
+  --code-bg: #020617;
+  --accent: #60a5fa;
+  --accent-bg: rgba(96, 165, 250, 0.18);
+  --accent-border: rgba(96, 165, 250, 0.6);
+  --social-bg: rgba(15, 23, 42, 0.8);
   --shadow:
-    rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+    rgba(0, 0, 0, 0.7) 0 10px 15px -3px, rgba(0, 0, 0, 0.5) 0 4px 6px -2px;
 }
 
 [data-theme='dark'] #social .button-icon {
@@ -168,10 +181,9 @@ body {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
   min-height: 100vh;
-  background: radial-gradient(circle at top left, #f9fafb 0, #eef2ff 40%, #0b1220 100%);
+  height: 100vh;
+  background: var(--shell-bg);
 }
 
 .sidebar {
@@ -182,6 +194,7 @@ body {
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.85));
   color: #e5e7eb;
   border-right: 1px solid rgba(148, 163, 184, 0.4);
+  min-height: 100vh;
 }
 
 .sidebar-header {
@@ -282,7 +295,10 @@ body {
 .main {
   display: flex;
   flex-direction: column;
-  padding: 16px 22px 22px;
+  padding: 24px 24px 32px;
+  color: var(--text);
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .topbar {
@@ -332,25 +348,22 @@ body {
 
 .main-content {
   margin-top: 18px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr);
+  display: block;
 }
 
 .view {
-  border-radius: 18px;
-  padding: 18px 18px 22px;
-  background: rgba(15, 23, 42, 0.92);
-  color: #e5e7eb;
-  box-shadow:
-    0 18px 45px rgba(15, 23, 42, 0.75),
-    0 0 0 1px rgba(148, 163, 184, 0.65);
+  border-radius: 0;
+  padding: 12px 4px 24px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: none;
 }
 
 .view-subtitle {
   margin-top: 4px;
   margin-bottom: 18px;
   font-size: 14px;
-  color: #9ca3af;
+  color: var(--muted);
 }
 
 #center {
@@ -374,10 +387,61 @@ body {
   color: #9ca3af;
 }
 
+.stacked-section + .stacked-section {
+  margin-top: 16px;
+}
+
 .status-text {
   margin-top: 12px;
   font-size: 13px;
-  color: #e5e7eb;
+  color: var(--status-text);
+}
+
+/* Make content cards use a light scheme, aligning with Bootstrap defaults */
+.main .card {
+  background-color: var(--card-bg);
+  color: var(--card-text);
+  border-color: var(--card-border);
+}
+
+.main .card .card-title,
+.main .card h1,
+.main .card h2,
+.main .card h3,
+.main .card h4,
+.main .card h5,
+.main .card h6 {
+  color: var(--card-text);
+}
+
+.main .card .text-muted,
+.main .card .small,
+.main .card small {
+  color: var(--muted) !important;
+}
+
+.expense-item {
+  background-color: var(--bg);
+}
+
+/* Theming for Bootstrap modals to match app theme */
+.modal-content {
+  background-color: var(--card-bg);
+  color: var(--card-text);
+  border-color: var(--card-border);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: var(--border);
+}
+
+.modal-title {
+  color: var(--text-h);
+}
+
+.modal-backdrop.show {
+  opacity: 0.65;
 }
 
 .transactions-view .transactions-table-wrapper {
@@ -521,10 +585,33 @@ body {
 .form-grid textarea {
   border-radius: 8px;
   border: 1px solid rgba(148, 163, 184, 0.7);
-  background: rgba(15, 23, 42, 0.9);
-  color: #e5e7eb;
+  background: var(--card-bg);
+  color: var(--card-text);
   padding: 6px 8px;
   font-size: 13px;
+}
+
+/* Global Bootstrap inputs/selects textareas themed to match cards */
+.form-control,
+.form-select,
+textarea.form-control {
+  background-color: var(--card-bg);
+  color: var(--card-text);
+  border-color: var(--card-border);
+}
+
+.form-control:focus,
+.form-select:focus,
+textarea.form-control:focus {
+  background-color: var(--card-bg);
+  color: var(--card-text);
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 0.08rem var(--accent-bg);
+}
+
+.form-control::placeholder,
+textarea.form-control::placeholder {
+  color: var(--muted);
 }
 
 .empty-state {

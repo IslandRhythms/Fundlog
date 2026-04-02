@@ -3,7 +3,7 @@ import { app } from 'electron';
 import { join } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 let db: Database.Database | null = null;
 
@@ -172,6 +172,19 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
       )
       .run(1, now);
+  }
+
+  if (current < 2 && SCHEMA_VERSION >= 2) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      ALTER TABLE budget_subcategories ADD COLUMN min_amount REAL;
+      ALTER TABLE budget_subcategories ADD COLUMN max_amount REAL;
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+      )
+      .run(2, now);
   }
 }
 

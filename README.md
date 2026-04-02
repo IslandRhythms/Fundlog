@@ -9,6 +9,13 @@ Fundlog is a desktop application built with Electron, Vite, and Vue 3 for tracki
 - **Local database**: Uses `better-sqlite3` for a local, file-based database (no external DB server required).
 - **Charts & analytics**: Visualisations powered by `chart.js` and `vue-chartjs`.
 - **Notifications**: Toasts and inline feedback using `vue-toastification`.
+- **Theme support**: Light/dark/system themes, configurable from the Settings page and applied via CSS variables (including modals and inputs).
+- **Budgets with 50/30/20 split**: Create budgets with monthly income and see both percentage and dollar allocations for Needs / Wants / Savings & Debt.
+- **Planned expenses**: For each budget, configure fixed and variable expenses within 50/30/20 categories, with per-expense and overall progress bars showing share of income.
+- **Custom category colors**: Each budget category can be assigned a custom color, used consistently in the dashboard pie chart, progress bars, and expense items.
+- **Unexpected expenses tracking**: A dedicated Expenses page lets you log unexpected items (with required label and category), and summarizes how they impact the budget versus the planned amounts.
+- **Dashboard overview**: A dashboard summarising current budget, planned vs unexpected expenses, 50/30/20 allocation, recent transactions, and top goals.
+- **Modal-based create flows**: Creating budgets, profiles, goals, and unexpected expenses is handled via Bootstrap modals triggered from card headers, keeping pages focused on data views.
 
 ### Prerequisites
 
