@@ -142,6 +142,7 @@ export const useDomainStore = defineStore('domain', {
       targetDate?: string | null;
       priority?: number;
       note?: string | null;
+      showOnDashboard?: boolean;
     }): Promise<boolean> {
       if (!this.activeProfileId) return false;
       const { useToast } = await import('vue-toastification');
@@ -157,6 +158,28 @@ export const useDomainStore = defineStore('domain', {
       } catch (err) {
         console.error(err);
         toast.error('Failed to create goal.');
+        return false;
+      }
+    },
+    async updateGoal(input: {
+      id: number;
+      name?: string;
+      targetAmount?: number;
+      targetDate?: string | null;
+      priority?: number;
+      note?: string | null;
+      showOnDashboard?: boolean;
+    }): Promise<boolean> {
+      const { useToast } = await import('vue-toastification');
+      const toast = useToast();
+      try {
+        const updated = await window.fundlog.goal.update(input);
+        const i = this.goals.findIndex((g) => g.id === updated.id);
+        if (i >= 0) this.goals[i] = updated;
+        return true;
+      } catch (err) {
+        console.error(err);
+        toast.error('Failed to update goal.');
         return false;
       }
     },

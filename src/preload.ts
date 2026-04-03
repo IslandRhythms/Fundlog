@@ -177,7 +177,17 @@ export const api = {
       targetDate?: string | null;
       priority?: number;
       note?: string | null;
+      showOnDashboard?: boolean;
     }): Promise<Goal> => ipcRenderer.invoke('goal:create', input),
+    update: async (input: {
+      id: number;
+      name?: string;
+      targetAmount?: number;
+      targetDate?: string | null;
+      priority?: number;
+      note?: string | null;
+      showOnDashboard?: boolean;
+    }): Promise<Goal> => ipcRenderer.invoke('goal:update', input),
   },
   csv: {
     importTransactions: async (input: {

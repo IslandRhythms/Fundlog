@@ -159,6 +159,16 @@ interface Window {
         targetDate?: string | null;
         priority?: number;
         note?: string | null;
+        showOnDashboard?: boolean;
+      }): Promise<import('./shared/types').Goal>;
+      update(input: {
+        id: number;
+        name?: string;
+        targetAmount?: number;
+        targetDate?: string | null;
+        priority?: number;
+        note?: string | null;
+        showOnDashboard?: boolean;
       }): Promise<import('./shared/types').Goal>;
     };
     csv: {

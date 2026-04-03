@@ -85,6 +85,8 @@ export interface Goal {
   targetDate: string | null;
   priority: number;
   note: string | null;
+  /** When true, this goal may appear on the Dashboard (up to three, by priority). */
+  showOnDashboard: boolean;
   createdAt: string;
   updatedAt: string;
 }

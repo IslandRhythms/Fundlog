@@ -4,7 +4,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 let db: Database.Database | null = null;
 
@@ -273,6 +273,18 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
       )
       .run(3, now);
+  }
+
+  if (current < 4 && SCHEMA_VERSION >= 4) {
+    const now = new Date().toISOString();
+    dbInstance.exec(
+      `ALTER TABLE goals ADD COLUMN show_on_dashboard INTEGER NOT NULL DEFAULT 1;`,
+    );
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(4, now);
   }
 }
 

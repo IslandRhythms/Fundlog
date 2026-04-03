@@ -92,17 +92,22 @@ function openEditPerkModal(cardId: number, perk: CreditCardPerk) {
   perkCashback.value = perk.cashbackDetail;
 }
 
+function perkTagTokens(tags: string | null | undefined): string[] {
+  if (!tags?.trim()) return [];
+  return tags
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function activePerkFor(card: CreditCard): CreditCardPerk | null {
+  if (card.activePerkId == null) return null;
+  return card.perks.find((p) => p.id === card.activePerkId) ?? null;
+}
+
 async function submitCard() {
   if (!activeProfileId.value || !cardName.value.trim()) return;
   const isEdit = !!editingCard.value;
-  if (
-    !isEdit &&
-    newCardPerkLabel.value.trim() &&
-    !newCardPerkCashback.value.trim()
-  ) {
-    toast.error('Enter cashback details for the first perk, or clear the perk label.');
-    return;
-  }
   try {
     if (editingCard.value) {
       await window.fundlog.card.update({
@@ -125,15 +130,12 @@ async function submitCard() {
         annualFee: cardAnnualFee.value,
         benefitsNotes: cardBenefitsNotes.value.trim() || null,
       });
-      if (
-        newCardPerkLabel.value.trim() &&
-        newCardPerkCashback.value.trim()
-      ) {
+      if (newCardPerkLabel.value.trim()) {
         await window.fundlog.card.perkCreate({
           cardId: created.id,
           label: newCardPerkLabel.value.trim(),
           categoryTags: newCardPerkTags.value.trim() || null,
-          cashbackDetail: newCardPerkCashback.value.trim(),
+          cashbackDetail: newCardPerkCashback.value.trim() || '',
         });
       }
       toast.success('Card added.');
@@ -161,14 +163,14 @@ async function removeCard(id: number) {
 
 async function submitPerk() {
   const cid = perkCardId.value;
-  if (!cid || !perkLabel.value.trim() || !perkCashback.value.trim()) return;
+  if (!cid || !perkLabel.value.trim()) return;
   try {
     if (editingPerk.value) {
       await window.fundlog.card.perkUpdate({
         id: editingPerk.value.perk.id,
         label: perkLabel.value.trim(),
         categoryTags: perkTags.value.trim() || null,
-        cashbackDetail: perkCashback.value.trim(),
+        cashbackDetail: perkCashback.value.trim() || '',
       });
       toast.success('Perk updated.');
     } else {
@@ -176,7 +178,7 @@ async function submitPerk() {
         cardId: cid,
         label: perkLabel.value.trim(),
         categoryTags: perkTags.value.trim() || null,
-        cashbackDetail: perkCashback.value.trim(),
+        cashbackDetail: perkCashback.value.trim() || '',
       });
       toast.success('Perk added.');
     }
@@ -217,8 +219,9 @@ async function setActivePerk(cardId: number, perkId: number | null) {
 <template>
   <div class="view credit-cards-view container-fluid">
     <h2 class="mb-2">Cards</h2>
-    <p class="view-subtitle mb-4">
-      Track credit cards, benefits, and which cashback or promo perk you are using now.
+    <p class="view-subtitle mb-2 small">
+      One earn type per perk (e.g. groceries vs dining). Mark which perk is
+      <strong>active</strong> when you use it at checkout.
     </p>
 
     <p v-if="!activeProfileId" class="status-text">
@@ -244,56 +247,105 @@ async function setActivePerk(cardId: number, perkId: number | null) {
       <div v-else-if="!cards.length" class="credit-cards-empty-hint mb-3">
         <p class="credit-cards-empty-title">No cards yet</p>
         <p class="credit-cards-empty-muted mb-2">
-          Add a card with the button above. After it appears in the list, open that card and use
-          <strong>Add perk</strong> for cashback rules, category bonuses, or limited-time deals.
+          Add a card, then add <strong>one perk per earn type</strong> (e.g. groceries vs dining vs
+          gas). Use <strong>Set as active</strong> on the perk you’re maximizing this month or at
+          checkout.
         </p>
         <p class="credit-cards-empty-muted mb-0">
-          Tip: in <strong>Add card</strong>, you can fill the optional <strong>First perk</strong> fields to create a perk in the same step.
+          Optional: when adding a card, create a first perk in the same flow—add the rest with
+          <strong>Add perk</strong> on the card.
         </p>
       </div>
 
-      <div v-else class="row g-3">
-        <div v-for="c in cards" :key="c.id" class="col-lg-6">
-          <section class="card h-100">
-            <div class="card-body">
-              <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-                <div>
-                  <h3 class="h5 card-title mb-1">{{ c.name }}</h3>
-                  <div class="small text-muted">
-                    <span v-if="c.issuer">{{ c.issuer }}</span>
-                    <span v-if="c.lastFour"> · •••• {{ c.lastFour }}</span>
-                    <span v-if="c.network"> · {{ c.network }}</span>
-                    <span v-if="c.annualFee != null">
-                      · {{ c.annualFee.toLocaleString() }} annual fee
-                    </span>
-                  </div>
+      <div v-else class="row gy-4">
+        <div v-for="c in cards" :key="c.id" class="col-12">
+          <div class="card credit-cards-card border shadow-none">
+            <div class="credit-cards-card-accent" aria-hidden="true" />
+            <div
+              class="card-header d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2 py-3 px-3 bg-transparent border-bottom border-secondary-subtle"
+            >
+              <div class="flex-grow-1 min-w-0">
+                <div class="d-flex flex-wrap align-items-baseline gap-2 mb-2">
+                  <h3 class="credit-cards-card-title h6 mb-0 text-break">{{ c.name }}</h3>
+                  <span v-if="c.issuer" class="small text-muted">{{ c.issuer }}</span>
                 </div>
-                <div class="d-flex flex-wrap gap-1 justify-content-end">
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-bs-toggle="modal"
-                    data-bs-target="#editCardModal"
-                    @click="openEditCardModal(c)"
+                <div class="d-flex flex-wrap gap-2">
+                  <span
+                    v-if="c.lastFour"
+                    class="badge rounded-pill font-monospace fw-normal px-2 py-1 bg-transparent text-body-secondary border border-secondary-subtle"
                   >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-danger"
-                    @click="removeCard(c.id)"
+                    •••• {{ c.lastFour }}
+                  </span>
+                  <span
+                    v-if="c.network"
+                    class="badge rounded-pill fw-normal px-2 py-1 bg-transparent text-body-secondary border border-secondary-subtle"
                   >
-                    Delete
-                  </button>
+                    {{ c.network }}
+                  </span>
+                  <span
+                    v-if="c.annualFee != null"
+                    class="badge rounded-pill fw-normal px-2 py-1 bg-transparent text-body-secondary border border-secondary-subtle"
+                  >
+                    {{ c.annualFee.toLocaleString() }} / yr
+                  </span>
                 </div>
               </div>
-              <p v-if="c.benefitsNotes" class="small mb-3">{{ c.benefitsNotes }}</p>
-
-              <div class="d-flex justify-content-between align-items-center mb-2">
-                <h4 class="h6 mb-0">Perks &amp; cashback</h4>
+              <div class="btn-group btn-group-sm flex-shrink-0" role="group" aria-label="Card actions">
                 <button
                   type="button"
-                  class="btn btn-sm btn-outline-primary"
+                  class="btn btn-outline-secondary"
+                  data-bs-toggle="modal"
+                  data-bs-target="#editCardModal"
+                  @click="openEditCardModal(c)"
+                >
+                  Edit
+                </button>
+                <button type="button" class="btn btn-outline-danger" @click="removeCard(c.id)">
+                  Remove
+                </button>
+              </div>
+            </div>
+
+            <div class="card-body p-3 d-flex flex-column gap-3">
+              <p
+                v-if="c.benefitsNotes"
+                class="credit-cards-notes small text-muted mb-0 rounded-2 border border-secondary-subtle px-3 py-2"
+              >
+                {{ c.benefitsNotes }}
+              </p>
+
+              <div
+                class="credit-cards-active small px-3 py-2"
+                :class="{ 'credit-cards-active--picked': !!activePerkFor(c) }"
+              >
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <span class="credit-cards-section-label mb-0">Active</span>
+                  <template v-if="activePerkFor(c)">
+                    <span class="fw-semibold text-body mb-0">{{ activePerkFor(c)?.label }}</span>
+                    <button
+                      type="button"
+                      class="btn btn-link btn-sm py-0 px-1 ms-sm-auto link-secondary"
+                      @click="setActivePerk(c.id, null)"
+                    >
+                      Clear
+                    </button>
+                  </template>
+                  <template v-else-if="c.perks.length">
+                    <span class="text-muted mb-0">None selected — pick one below</span>
+                  </template>
+                  <template v-else>
+                    <span class="text-muted mb-0">Add perks first</span>
+                  </template>
+                </div>
+              </div>
+
+              <div
+                class="d-flex flex-wrap justify-content-between align-items-center gap-2 pb-2 border-bottom border-secondary-subtle"
+              >
+                <span class="credit-cards-section-label mb-0">Perks</span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary"
                   data-bs-toggle="modal"
                   data-bs-target="#addPerkModal"
                   @click="openAddPerkModal(c.id)"
@@ -302,66 +354,80 @@ async function setActivePerk(cardId: number, perkId: number | null) {
                 </button>
               </div>
 
-              <ul v-if="c.perks.length" class="list-unstyled mb-0">
-                <li
+              <div v-if="c.perks.length" class="vstack gap-2">
+                <div
                   v-for="p in c.perks"
                   :key="p.id"
-                  class="perk-row border rounded p-2 mb-2"
-                  :class="{ 'border-success': c.activePerkId === p.id }"
+                  class="credit-cards-perk d-flex rounded-2 border border-secondary-subtle overflow-hidden"
+                  :class="{ 'credit-cards-perk--active': c.activePerkId === p.id }"
                 >
-                  <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div>
-                      <div class="fw-semibold">
-                        {{ p.label }}
-                        <span v-if="c.activePerkId === p.id" class="badge bg-success ms-1">
-                          Active
-                        </span>
+                  <div class="credit-cards-perk-rail" aria-hidden="true" />
+                  <div class="flex-grow-1 min-w-0 py-2 ps-3 pe-2">
+                    <div class="row g-2 align-items-start">
+                      <div class="col">
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                          <span class="fw-semibold small mb-0">{{ p.label }}</span>
+                          <span
+                            v-if="c.activePerkId === p.id"
+                            class="badge rounded-pill bg-transparent text-primary border border-primary border-opacity-50 perk-active-badge"
+                          >
+                            Active
+                          </span>
+                        </div>
+                        <div
+                          v-if="perkTagTokens(p.categoryTags).length"
+                          class="d-flex flex-wrap gap-1 mb-1"
+                        >
+                          <span
+                            v-for="tok in perkTagTokens(p.categoryTags)"
+                            :key="tok"
+                            class="badge rounded-pill bg-transparent text-body-secondary border border-secondary-subtle fw-normal px-2 py-1 perk-tag-badge"
+                          >
+                            {{ tok }}
+                          </span>
+                        </div>
+                        <p v-if="p.cashbackDetail?.trim()" class="small text-muted mb-0">
+                          {{ p.cashbackDetail }}
+                        </p>
                       </div>
-                      <div v-if="p.categoryTags" class="small text-muted">
-                        {{ p.categoryTags }}
+                      <div class="col-auto">
+                        <div class="d-flex flex-wrap gap-1 justify-content-end">
+                          <button
+                            v-if="c.activePerkId !== p.id"
+                            type="button"
+                            class="btn btn-sm btn-outline-primary"
+                            @click="setActivePerk(c.id, p.id)"
+                          >
+                            Set active
+                          </button>
+                          <button v-else type="button" class="btn btn-sm btn-primary" disabled>
+                            Active
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            data-bs-toggle="modal"
+                            data-bs-target="#addPerkModal"
+                            @click="openEditPerkModal(c.id, p)"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger"
+                            @click="removePerk(p.id)"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                      <p class="small mb-0 mt-1">{{ p.cashbackDetail }}</p>
-                    </div>
-                    <div class="d-flex flex-column gap-1 flex-shrink-0">
-                      <button
-                        v-if="c.activePerkId !== p.id"
-                        type="button"
-                        class="btn btn-sm btn-success"
-                        @click="setActivePerk(c.id, p.id)"
-                      >
-                        Set active
-                      </button>
-                      <button
-                        v-else
-                        type="button"
-                        class="btn btn-sm btn-outline-secondary"
-                        @click="setActivePerk(c.id, null)"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline-secondary"
-                        data-bs-toggle="modal"
-                        data-bs-target="#addPerkModal"
-                        @click="openEditPerkModal(c.id, p)"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline-danger"
-                        @click="removePerk(p.id)"
-                      >
-                        Delete
-                      </button>
                     </div>
                   </div>
-                </li>
-              </ul>
-              <p v-else class="small text-muted mb-0">No perks yet.</p>
+                </div>
+              </div>
+              <p v-else class="text-muted small mb-0">No perks yet.</p>
             </div>
-          </section>
+          </div>
         </div>
       </div>
     </template>
@@ -412,9 +478,12 @@ async function setActivePerk(cardId: number, perkId: number | null) {
           </div>
           <div class="col-12">
             <hr class="my-2" />
-            <p class="form-label mb-2">First perk <span class="fw-normal text-muted">(optional)</span></p>
+            <p class="form-label mb-2">
+              First perk <span class="fw-normal text-muted">(optional)</span>
+            </p>
             <p class="small text-muted mb-2">
-              Add a cashback or promotion entry now, or skip and use <strong>Add perk</strong> on the card later.
+              One row = one perk. Example: label <strong>3% groceries</strong>, category tag
+              <strong>groceries</strong>. Add dining and gas as separate perks after saving the card.
             </p>
             <div class="row g-2">
               <div class="col-12">
@@ -422,7 +491,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
                   v-model="newCardPerkLabel"
                   type="text"
                   class="form-control form-control-sm"
-                  placeholder="Label (e.g. Q1 grocery 5%)"
+                  placeholder="e.g. 3% groceries"
                 />
               </div>
               <div class="col-12">
@@ -430,7 +499,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
                   v-model="newCardPerkTags"
                   type="text"
                   class="form-control form-control-sm"
-                  placeholder="Categories / merchants (optional)"
+                  placeholder="Category tag(s), comma-separated — e.g. groceries"
                 />
               </div>
               <div class="col-12">
@@ -438,7 +507,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
                   v-model="newCardPerkCashback"
                   class="form-control form-control-sm"
                   rows="2"
-                  placeholder="Cashback or deal details (required if label is filled)"
+                  placeholder="Caps, dates, or fine print (optional)"
                 />
               </div>
             </div>
@@ -510,7 +579,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
     aria-labelledby="addPerkModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="addPerkModalLabel" class="modal-title">
@@ -519,26 +588,36 @@ async function setActivePerk(cardId: number, perkId: number | null) {
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" />
         </div>
         <div class="modal-body">
-          <div class="mb-2">
-            <label class="form-label">Label <span class="text-danger">*</span></label>
-            <input v-model="perkLabel" type="text" class="form-control" placeholder="Q1 grocery 5%" />
+          <p class="small text-muted cc-perk-modal-intro">
+            Each perk is <strong>one</strong> earn rule (e.g. <strong>3% on groceries</strong>). If the
+            card also pays <strong>3% on dining</strong>, create <strong>another perk</strong> for dining.
+            Use <strong>Set as active</strong> on the card to track which bonus you’re using now.
+          </p>
+          <div class="mb-3">
+            <label class="form-label">Perk name <span class="text-danger">*</span></label>
+            <input
+              v-model="perkLabel"
+              type="text"
+              class="form-control"
+              placeholder="e.g. 3% groceries, 2% gas, Q1 wholesale clubs"
+            />
           </div>
-          <div class="mb-2">
-            <label class="form-label">Categories / merchants (optional)</label>
+          <div class="mb-3">
+            <label class="form-label">Category / merchant tags <span class="text-muted">(optional)</span></label>
             <input
               v-model="perkTags"
               type="text"
               class="form-control"
-              placeholder="Groceries, dining, Amazon…"
+              placeholder="Comma-separated — e.g. groceries, supermarkets"
             />
           </div>
           <div class="mb-0">
-            <label class="form-label">Cashback / deal details <span class="text-danger">*</span></label>
+            <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
             <textarea
               v-model="perkCashback"
               class="form-control"
-              rows="4"
-              placeholder="5% back at supermarkets up to $1,500 spend Jan–Mar…"
+              rows="3"
+              placeholder="Spending caps, promo end dates, activation rules, portal bonuses…"
             />
           </div>
         </div>

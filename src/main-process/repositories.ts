@@ -349,18 +349,38 @@ export const TransactionRepository = {
   },
 };
 
+function goalFromRow(row: Record<string, unknown>): Goal {
+  const showRaw = row.showOnDashboard ?? row.show_on_dashboard;
+  const showOn =
+    showRaw === undefined || showRaw === null ? true : Number(showRaw) === 1;
+  return {
+    id: row.id as number,
+    profileId: row.profileId as number,
+    name: row.name as string,
+    targetAmount: row.targetAmount as number,
+    targetDate: (row.targetDate as string | null) ?? null,
+    priority: row.priority as number,
+    note: (row.note as string | null) ?? null,
+    showOnDashboard: showOn,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+  };
+}
+
 export const GoalRepository = {
   listByProfile(profileId: number): Goal[] {
-    return db()
+    const rows = db()
       .prepare(
         `SELECT id, profile_id AS profileId, name, target_amount AS targetAmount,
                 target_date AS targetDate, priority, note,
+                show_on_dashboard AS showOnDashboard,
                 created_at AS createdAt, updated_at AS updatedAt
          FROM goals
          WHERE profile_id = ?
-         ORDER BY priority DESC, created_at ASC`
+         ORDER BY priority DESC, created_at ASC`,
       )
-      .all(profileId) as Goal[];
+      .all(profileId) as Record<string, unknown>[];
+    return rows.map(goalFromRow);
   },
   create(input: {
     profileId: number;
@@ -369,23 +389,87 @@ export const GoalRepository = {
     targetDate?: string | null;
     priority?: number;
     note?: string | null;
+    showOnDashboard?: boolean;
   }): Goal {
     const createdAt = now();
+    const showOn = input.showOnDashboard === false ? 0 : 1;
     const result = db()
       .prepare(
         `INSERT INTO goals
-         (profile_id, name, target_amount, target_date, priority, note, created_at, updated_at)
-         VALUES (@profileId, @name, @targetAmount, @targetDate, @priority, @note, @createdAt, @createdAt)`
+         (profile_id, name, target_amount, target_date, priority, note, show_on_dashboard, created_at, updated_at)
+         VALUES (@profileId, @name, @targetAmount, @targetDate, @priority, @note, @showOn, @createdAt, @createdAt)`,
       )
       .run({
-        ...input,
+        profileId: input.profileId,
+        name: input.name.trim(),
+        targetAmount: input.targetAmount,
         targetDate: input.targetDate ?? null,
         priority: input.priority ?? 0,
         note: input.note ?? null,
+        showOn,
         createdAt,
       });
     const id = Number(result.lastInsertRowid);
     return this.listByProfile(input.profileId).find((g) => g.id === id)!;
+  },
+  update(input: {
+    id: number;
+    name?: string;
+    targetAmount?: number;
+    targetDate?: string | null;
+    priority?: number;
+    note?: string | null;
+    showOnDashboard?: boolean;
+  }): Goal {
+    const pidRow = db()
+      .prepare('SELECT profile_id AS profileId FROM goals WHERE id = ?')
+      .get(input.id) as { profileId: number } | undefined;
+    if (!pidRow) {
+      throw new Error('Goal not found');
+    }
+    const current = this.listByProfile(pidRow.profileId).find(
+      (g) => g.id === input.id,
+    );
+    if (!current) {
+      throw new Error('Goal not found');
+    }
+    const updatedAt = now();
+    const name = input.name !== undefined ? input.name.trim() : current.name;
+    const targetAmount =
+      input.targetAmount !== undefined
+        ? input.targetAmount
+        : current.targetAmount;
+    const targetDate =
+      input.targetDate !== undefined ? input.targetDate : current.targetDate;
+    const priority =
+      input.priority !== undefined ? input.priority : current.priority;
+    const note = input.note !== undefined ? input.note : current.note;
+    const showOn =
+      input.showOnDashboard !== undefined
+        ? input.showOnDashboard
+          ? 1
+          : 0
+        : current.showOnDashboard
+          ? 1
+          : 0;
+    db()
+      .prepare(
+        `UPDATE goals SET name = @name, target_amount = @targetAmount,
+           target_date = @targetDate, priority = @priority, note = @note,
+           show_on_dashboard = @showOn, updated_at = @updatedAt
+         WHERE id = @id`,
+      )
+      .run({
+        id: input.id,
+        name,
+        targetAmount,
+        targetDate,
+        priority,
+        note,
+        showOn,
+        updatedAt,
+      });
+    return this.listByProfile(pidRow.profileId).find((g) => g.id === input.id)!;
   },
 };
 

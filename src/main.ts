@@ -599,9 +599,28 @@ ipcMain.handle(
       targetDate?: string | null;
       priority?: number;
       note?: string | null;
+      showOnDashboard?: boolean;
     },
   ) => {
     return GoalRepository.create(args);
+  },
+);
+
+ipcMain.handle(
+  'goal:update',
+  (
+    _event,
+    args: {
+      id: number;
+      name?: string;
+      targetAmount?: number;
+      targetDate?: string | null;
+      priority?: number;
+      note?: string | null;
+      showOnDashboard?: boolean;
+    },
+  ) => {
+    return GoalRepository.update(args);
   },
 );
 

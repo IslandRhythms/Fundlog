@@ -95,6 +95,13 @@ function hasColorOverrides(colors: CustomThemeColors) {
   return Object.keys(colors).length > 0;
 }
 
+/** Bootstrap 5.3 color mode (`bg-body-*`, subtle utilities, badges) follows `data-bs-theme`, not `data-theme`. */
+function applyResolvedThemeToDocument(resolved: 'light' | 'dark') {
+  const root = document.documentElement;
+  root.dataset.theme = resolved;
+  root.setAttribute('data-bs-theme', resolved);
+}
+
 export const useUiStore = defineStore('ui', {
   state: () => ({
     theme: 'system' as Theme,
@@ -107,7 +114,7 @@ export const useUiStore = defineStore('ui', {
       const state = await window.fundlog.theme.getState();
       this.theme = state.preference;
       this.resolvedTheme = state.resolved;
-      document.documentElement.dataset.theme = state.resolved;
+      applyResolvedThemeToDocument(state.resolved);
       await this.loadCustomThemeFromPrefs();
     },
     async loadCustomThemeFromPrefs() {
@@ -128,7 +135,7 @@ export const useUiStore = defineStore('ui', {
       if (window.fundlog?.theme) {
         const resolved = await window.fundlog.theme.set(theme);
         this.resolvedTheme = resolved;
-        document.documentElement.dataset.theme = resolved;
+        applyResolvedThemeToDocument(resolved);
         if (this.customTheme?.enabled && this.customTheme.colors && hasColorOverrides(this.customTheme.colors)) {
           clearCustomPropertiesFromRoot();
           applyColorsToRoot(this.customTheme.colors);

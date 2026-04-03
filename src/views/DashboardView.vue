@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { useDomainStore } from '../stores/domain';
 import CategoryPieChart from '../components/CategoryPieChart.vue';
 import LoadingView from '../components/LoadingView.vue';
@@ -8,10 +9,17 @@ import { computePlannedExpenseBarSegments } from '../shared/plannedExpenseBar';
 import type {
   BudgetCategory,
   BudgetSubcategory,
+  Profile,
   Transaction,
 } from '../shared/types';
 
 const domain = useDomainStore();
+
+const activeProfile = computed<Profile | null>(() => {
+  const id = domain.activeProfileId;
+  if (!id) return null;
+  return domain.profiles.find((p) => p.id === id) ?? null;
+});
 
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
@@ -82,8 +90,27 @@ function formatTxTitle(tx: Transaction) {
 }
 
 const activeGoals = computed(() =>
-  [...goals.value].sort((a, b) => b.priority - a.priority).slice(0, 3),
+  [...goals.value]
+    .filter((g) => g.showOnDashboard)
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 3),
 );
+
+function formatGoalMoney(amount: number) {
+  const code = activeProfile.value?.currencyCode?.trim() || 'USD';
+  try {
+    return amount.toLocaleString(undefined, { style: 'currency', currency: code });
+  } catch {
+    return `${amount.toLocaleString()} ${code}`;
+  }
+}
+
+function formatGoalDate(iso: string | null) {
+  if (!iso) return null;
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
 </script>
 
 <template>
@@ -189,55 +216,77 @@ const activeGoals = computed(() =>
         </div>
       </div>
       <div class="col-12">
-        <div class="card h-100">
-          <div class="card-body d-flex flex-column gap-3">
+        <section class="card h-100 dashboard-section-goals overflow-hidden">
+          <div class="dashboard-section-goals__head">
             <div>
-              <h3 class="h5 card-title mb-2">Recent activity</h3>
-              <p v-if="!recentTransactions.length" class="small text-muted mb-0">
-                No recent transactions yet. Import CSV or add activity to see it here.
+              <h3 class="h5 mb-1 dashboard-section-goals__title">Top goals</h3>
+              <p class="small mb-0 dashboard-section-goals__lede">
+                Up to three goals you marked for the dashboard
+                <span v-if="activeProfile">({{ activeProfile.currencyCode }})</span>
+                , ordered by priority. Choose them on the
+                <RouterLink to="/goals" class="dashboard-goals-link">Goals</RouterLink>
+                page.
               </p>
-              <ul v-else class="list-unstyled mb-0 small">
-                <li
-                  v-for="tx in recentTransactions"
-                  :key="tx.id"
-                  class="d-flex justify-content-between border-bottom py-1"
-                >
-                  <div>
-                    <div>{{ formatTxTitle(tx) }}</div>
-                    <div class="text-muted">
-                      {{ tx.date }}
-                    </div>
-                  </div>
-                  <div class="text-end">
-                    <div>{{ tx.amount.toFixed(2) }}</div>
-                    <div class="text-muted">{{ tx.source }}</div>
-                  </div>
-                </li>
-              </ul>
             </div>
+            <RouterLink to="/goals" class="btn btn-sm btn-outline-primary dashboard-section-goals__cta">
+              Manage goals
+            </RouterLink>
+          </div>
+          <div class="card-body pt-3">
+            <p v-if="!activeGoals.length" class="dashboard-goals-empty small mb-0">
+              No goals yet.
+              <RouterLink to="/goals" class="dashboard-goals-link">Create a goal</RouterLink>
+              so your biggest targets stay on the overview.
+            </p>
+            <div v-else class="dashboard-goals-grid">
+              <article
+                v-for="g in activeGoals"
+                :key="g.id"
+                class="dashboard-goal-tile"
+              >
+                <div class="dashboard-goal-tile__top">
+                  <span class="dashboard-goal-tile__name">{{ g.name }}</span>
+                  <span class="dashboard-goal-tile__badge" title="Priority (5 = first)">
+                    P{{ g.priority }}
+                  </span>
+                </div>
+                <div class="dashboard-goal-tile__amount">
+                  {{ formatGoalMoney(g.targetAmount) }}
+                </div>
+                <div v-if="formatGoalDate(g.targetDate)" class="dashboard-goal-tile__date">
+                  by {{ formatGoalDate(g.targetDate) }}
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+      </div>
 
-            <div>
-              <h3 class="h5 card-title mb-2">Top goals</h3>
-              <p v-if="!activeGoals.length" class="small text-muted mb-0">
-                No goals yet. Create a goal to start tracking progress.
-              </p>
-              <ul v-else class="list-unstyled mb-0 small">
-                <li
-                  v-for="g in activeGoals"
-                  :key="g.id"
-                  class="mb-2"
-                >
-                  <div class="d-flex justify-content-between">
-                    <span class="fw-semibold">{{ g.name }}</span>
-                    <span class="badge bg-success">Priority {{ g.priority }}</span>
+      <div class="col-12">
+        <div class="card h-100 dashboard-section-activity">
+          <div class="card-body">
+            <h3 class="h5 card-title mb-3">Recent activity</h3>
+            <p v-if="!recentTransactions.length" class="small text-muted mb-0">
+              No recent transactions yet. Import CSV or add activity to see it here.
+            </p>
+            <ul v-else class="list-unstyled mb-0 dashboard-activity-list">
+              <li
+                v-for="tx in recentTransactions"
+                :key="tx.id"
+                class="dashboard-activity-row"
+              >
+                <div>
+                  <div class="dashboard-activity-row__title">{{ formatTxTitle(tx) }}</div>
+                  <div class="small text-muted">
+                    {{ tx.date }}
                   </div>
-                  <div class="text-muted">
-                    Target {{ g.targetAmount.toLocaleString() }}
-                    <span v-if="g.targetDate"> · by {{ g.targetDate }}</span>
-                  </div>
-                </li>
-              </ul>
-            </div>
+                </div>
+                <div class="text-end">
+                  <div class="dashboard-activity-row__amt">{{ tx.amount.toFixed(2) }}</div>
+                  <div class="small text-muted">{{ tx.source }}</div>
+                </div>
+              </li>
+            </ul>
           </div>
         </div>
       </div>
