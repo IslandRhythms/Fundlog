@@ -1,17 +1,68 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { Modal } from 'bootstrap';
+import { useToast } from 'vue-toastification';
 import { useDomainStore } from '../stores/domain';
-import type { BudgetCategory, BudgetSubcategory } from '../shared/types';
+import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
+import {
+  computePlannedExpenseBarSegments,
+  plannedAmountFromSub,
+} from '../shared/plannedExpenseBar';
+import type { BudgetCategory, BudgetSubcategory, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
+const toast = useToast();
+
+const existingBudgetsExpanded = ref(true);
+
+const clearActivityMonth = ref('');
+const clearingMonth = ref(false);
+
+function hideBsModal(elementId: string) {
+  const el = document.getElementById(elementId);
+  if (el) Modal.getOrCreateInstance(el).hide();
+}
+
+function openClearMonthModal() {
+  const d = new Date();
+  clearActivityMonth.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function toggleExistingBudgets() {
+  existingBudgetsExpanded.value = !existingBudgetsExpanded.value;
+}
+
+async function confirmClearMonthActivity() {
+  if (!activeBudget.value) return;
+  clearingMonth.value = true;
+  try {
+    const { deleted } = await window.fundlog.transaction.clearForBudgetMonth(
+      activeBudget.value.id,
+      clearActivityMonth.value,
+    );
+    await domain.loadTransactions();
+    await loadCategories();
+    toast.success(
+      deleted
+        ? `Removed ${deleted} transaction(s) for ${clearActivityMonth.value}.`
+        : `No transactions found for ${clearActivityMonth.value}.`,
+    );
+    hideBsModal('clearMonthModal');
+  } catch (e) {
+    console.error(e);
+    toast.error('Could not clear activity for that month.');
+  } finally {
+    clearingMonth.value = false;
+  }
+}
 const name = ref('');
 const startMonth = ref('');
 const monthlyIncome = ref<number | null>(null);
 const ruleSet = ref<'fiftyThirtyTwenty' | 'custom'>('fiftyThirtyTwenty');
-const showForm = ref(false);
 
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
+const unexpectedTxs = ref<Transaction[]>([]);
 const editingCategoryId = ref<number | null>(null);
 const newLabel = ref('');
 const newType = ref<'fixed' | 'variable'>('fixed');
@@ -53,10 +104,15 @@ async function submit() {
 }
 
 async function loadCategories() {
-  if (!activeBudget.value) return;
-  const result = await (window as any).fundlog.category.listByBudget(activeBudget.value.id);
+  if (!activeBudget.value || !domain.activeProfileId) return;
+  const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
   categories.value = result.categories;
   subcategories.value = result.subcategories;
+  const unexpected = await window.fundlog.transaction.listUnexpected(
+    domain.activeProfileId,
+    activeBudget.value.id,
+  );
+  unexpectedTxs.value = unexpected;
 }
 
 const groupedSubcategories = computed(() => {
@@ -69,17 +125,7 @@ const groupedSubcategories = computed(() => {
   return grouped;
 });
 
-const plannedAmount = (sub: BudgetSubcategory) => {
-  if (!sub.isFlexible && sub.targetAmount != null) {
-    return sub.targetAmount;
-  }
-  if (sub.isFlexible && (sub.maxAmount != null || sub.minAmount != null)) {
-    const min = sub.minAmount ?? 0;
-    const max = sub.maxAmount ?? min;
-    return (min + max) / 2;
-  }
-  return 0;
-};
+const plannedAmount = plannedAmountFromSub;
 
 const percentOfBudget = (sub: BudgetSubcategory) => {
   if (!activeBudget.value || !activeBudget.value.monthlyIncome) return 0;
@@ -89,13 +135,23 @@ const percentOfBudget = (sub: BudgetSubcategory) => {
   return Math.min(100, (amt / income) * 100);
 };
 
-const totalPlanned = computed(() =>
-  subcategories.value.reduce((sum, sub) => sum + plannedAmount(sub), 0),
+const plannedBarResult = computed(() =>
+  computePlannedExpenseBarSegments(
+    categories.value,
+    groupedSubcategories.value,
+    subcategories.value,
+    unexpectedTxs.value,
+    activeBudget.value?.monthlyIncome ?? 0,
+  ),
 );
 
+const totalPlanned = computed(() => plannedBarResult.value.totalPlanned);
+
+const totalUnexpected = computed(() => plannedBarResult.value.totalUnexpected);
+
 const totalPercent = computed(() => {
-  if (!activeBudget.value || !activeBudget.value.monthlyIncome || !totalPlanned.value) return 0;
-  return Math.min(100, (totalPlanned.value / activeBudget.value.monthlyIncome) * 100);
+  if (!activeBudget.value?.monthlyIncome) return 0;
+  return plannedBarResult.value.combinedOfIncomePct;
 });
 
 function startAddFor(categoryId: number) {
@@ -110,7 +166,7 @@ function startAddFor(categoryId: number) {
 
 async function submitSubcategory(category: BudgetCategory) {
   if (!activeBudget.value || !newLabel.value.trim()) return;
-  const result = await (window as any).fundlog.subcategory.create({
+  const result = await window.fundlog.subcategory.create({
     budgetId: activeBudget.value.id,
     parentCategoryId: category.id,
     label: newLabel.value.trim(),
@@ -127,7 +183,7 @@ async function submitSubcategory(category: BudgetCategory) {
 
 async function updateCategoryColor(cat: BudgetCategory, color: string) {
   if (!activeBudget.value) return;
-  const result = await (window as any).fundlog.category.updateColor({
+  const result = await window.fundlog.category.updateColor({
     id: cat.id,
     color,
     budgetId: activeBudget.value.id,
@@ -138,54 +194,108 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
 </script>
 
 <template>
-  <div class="view container-fluid">
+  <div class="view budgets-view container-fluid">
     <h2 class="mb-2">Budgets</h2>
     <p class="view-subtitle mb-4">
       Create separate budgets and choose the 50/30/20 rule or a custom structure.
     </p>
-    <div class="row g-3">
-      <div class="col-12">
-        <section class="card card-list stacked-section h-100">
-          <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h3 class="h5 card-title mb-0">Existing budgets</h3>
-              <button
-                class="btn btn-sm btn-primary"
-                type="button"
-                data-bs-toggle="modal"
-                data-bs-target="#createBudgetModal"
-              >
-                New budget
-              </button>
-            </div>
-            <div v-if="budgets.length === 0" class="alert alert-info mt-3">
-              No budgets yet. Create your first budget to get started.
-            </div>
-            <ul v-else class="list-unstyled mt-3">
-              <li v-for="b in budgets" :key="b.id" class="mb-2">
-                <div class="d-flex flex-column border rounded p-2 bg-dark bg-opacity-50">
-                  <div class="d-flex align-items-center mb-1">
-                    <span class="fw-semibold me-2">{{ b.name }}</span>
-                    <span v-if="b.isActive" class="badge bg-success">Active</span>
-                  </div>
-                  <div class="small text-muted d-flex flex-wrap gap-2">
-                    <span>From {{ b.startMonth }}</span>
-                    <span>Income {{ b.monthlyIncome.toLocaleString() }}</span>
-                      <span v-if="b.ruleSet === 'fiftyThirtyTwenty'">
-                        50 / 30 / 20
-                        ({{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 50) }} /
-                        {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 30) }} /
-                        {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 20) }})
-                      </span>
-                      <span v-else>Custom</span>
-                  </div>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </section>
-      </div>
+
+    <div class="budgets-toolbar d-flex flex-wrap align-items-center gap-2 mb-3">
+      <button
+        type="button"
+        class="btn btn-primary"
+        data-bs-toggle="modal"
+        data-bs-target="#createBudgetModal"
+      >
+        New budget
+      </button>
+      <button
+        v-if="activeBudget"
+        type="button"
+        class="btn btn-outline-warning"
+        data-bs-toggle="modal"
+        data-bs-target="#clearMonthModal"
+        @click="openClearMonthModal"
+      >
+        Start clean month…
+      </button>
     </div>
+
+    <section class="card budgets-existing-card stacked-section mb-3">
+      <button
+        type="button"
+        class="budgets-existing-toggle"
+        :class="{ 'budgets-existing-toggle--expanded': existingBudgetsExpanded }"
+        :aria-expanded="existingBudgetsExpanded"
+        aria-controls="existingBudgetsPanel"
+        id="existingBudgetsToggle"
+        @click="toggleExistingBudgets"
+      >
+        <div class="budgets-existing-toggle-main">
+          <span class="budgets-existing-toggle-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+            </svg>
+          </span>
+          <div class="budgets-existing-toggle-text">
+            <span class="budgets-existing-toggle-title">Your budgets</span>
+            <span class="budgets-existing-toggle-meta">
+              {{ budgets.length === 0 ? 'None yet' : `${budgets.length} saved` }}
+            </span>
+          </div>
+        </div>
+        <span
+          class="budgets-collapse-chevron"
+          :class="{ 'budgets-collapse-chevron--collapsed': !existingBudgetsExpanded }"
+          aria-hidden="true"
+        />
+      </button>
+
+      <div
+        v-show="existingBudgetsExpanded"
+        id="existingBudgetsPanel"
+        class="budgets-existing-panel"
+        role="region"
+        aria-labelledby="existingBudgetsToggle"
+      >
+        <div class="card-body budgets-existing-body">
+          <div v-if="budgets.length === 0" class="budgets-existing-empty">
+            <p class="budgets-existing-empty-title mb-1">No budgets yet</p>
+            <p class="budgets-existing-empty-text mb-0">
+              Use <strong>New budget</strong> above to create your first one.
+            </p>
+          </div>
+          <ul v-else class="list-unstyled mb-0 budgets-existing-list">
+            <li v-for="b in budgets" :key="b.id" class="budgets-existing-row">
+              <div class="budgets-existing-row-inner">
+                <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+                  <span class="budgets-existing-name">{{ b.name }}</span>
+                  <span v-if="b.isActive" class="badge bg-success">Active</span>
+                </div>
+                <div class="budgets-existing-details">
+                  <span>From {{ b.startMonth }}</span>
+                  <span class="budgets-existing-dot" aria-hidden="true">·</span>
+                  <span>Income {{ b.monthlyIncome.toLocaleString() }}</span>
+                  <template v-if="b.ruleSet === 'fiftyThirtyTwenty'">
+                    <span class="budgets-existing-dot" aria-hidden="true">·</span>
+                    <span>
+                      50 / 30 / 20
+                      ({{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 50) }} /
+                      {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 30) }} /
+                      {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 20) }})
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="budgets-existing-dot" aria-hidden="true">·</span>
+                    <span>Custom</span>
+                  </template>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
 
     <div v-if="activeBudget" class="row g-3 mt-3">
       <div class="col-12">
@@ -195,25 +305,49 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
               Planned expenses for {{ activeBudget.name }}
             </h3>
             <p class="small text-muted mb-2">
-              Configure fixed and variable expenses within each category of this budget.
+              Configure fixed and variable expenses within each category. Unexpected expenses
+              from the Expenses page are included by category.
             </p>
-            <div class="mb-1 d-flex justify-content-between small">
-              <span>Total planned</span>
+            <div class="mb-1 d-flex flex-wrap justify-content-between gap-2 small">
+              <span>Planned line items</span>
               <span>
-                {{ totalPlanned.toLocaleString() }}
+                {{ plannedBarResult.totalPlanned.toLocaleString() }}
+                <span v-if="activeBudget.monthlyIncome" class="text-muted">
+                  ({{
+                    (
+                      (plannedBarResult.totalPlanned / activeBudget.monthlyIncome) *
+                      100
+                    ).toFixed(1)
+                  }}% of income)
+                </span>
+              </span>
+            </div>
+            <div class="mb-2 d-flex flex-wrap justify-content-between gap-2 small">
+              <span>Unexpected (manual)</span>
+              <span>
+                {{ plannedBarResult.totalUnexpected.toLocaleString() }}
+                <span v-if="activeBudget.monthlyIncome && plannedBarResult.totalUnexpected" class="text-muted">
+                  ({{
+                    (
+                      (plannedBarResult.totalUnexpected / activeBudget.monthlyIncome) *
+                      100
+                    ).toFixed(1)
+                  }}% of income)
+                </span>
+              </span>
+            </div>
+            <div class="mb-1 d-flex flex-wrap justify-content-between gap-2 small fw-semibold">
+              <span>Combined</span>
+              <span>
+                {{ (plannedBarResult.totalPlanned + plannedBarResult.totalUnexpected).toLocaleString() }}
                 ({{ totalPercent.toFixed(1) }}% of income)
               </span>
             </div>
-            <div class="progress mb-0" style="height: 6px">
-              <div
-                class="progress-bar"
-                role="progressbar"
-                :style="{ width: totalPercent + '%' }"
-                :aria-valuenow="totalPercent"
-                aria-valuemin="0"
-                aria-valuemax="100"
-              />
-            </div>
+            <PlannedExpenseCategoryBar
+              :category-parts="plannedBarResult.categoryParts"
+              :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
+              empty-hint="Add planned amounts or record unexpected expenses to see spending by category on one bar."
+            />
           </div>
         </section>
       </div>
@@ -407,6 +541,66 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
       </div>
     </div>
   </div>
+
+  <div
+    id="clearMonthModal"
+    class="modal fade"
+    tabindex="-1"
+    aria-labelledby="clearMonthModalLabel"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 id="clearMonthModalLabel" class="modal-title">Start a clean month</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" />
+        </div>
+        <div class="modal-body">
+          <p class="mb-3">
+            You are about to clear activity for
+            <strong>{{ activeBudget?.name }}</strong>
+            only. Other budgets are not affected.
+          </p>
+          <ul class="small mb-3 ps-3 clear-month-modal-list">
+            <li>
+              <strong>What stays:</strong> this budget’s categories, subcategories, planned amounts,
+              and income figure. Your structure is unchanged.
+            </li>
+            <li>
+              <strong>What is removed:</strong> every transaction stored against this budget whose
+              date falls in the calendar month you pick below—imports, manual entries, and anything
+              else tied to this budget in that month.
+            </li>
+            <li>
+              <strong>Receipt files</strong> on disk are not deleted; only database links for those
+              transactions are cleared.
+            </li>
+            <li>This action <strong>cannot be undone</strong>.</li>
+          </ul>
+          <p class="small text-muted mb-2">
+            Use this when you want a fresh month of numbers without rebuilding the budget from
+            scratch.
+          </p>
+          <label class="form-label">Calendar month to clear</label>
+          <input v-model="clearActivityMonth" type="month" class="form-control" />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-warning"
+            :disabled="clearingMonth || !clearActivityMonth"
+            @click="confirmClearMonthActivity"
+          >
+            {{ clearingMonth ? 'Working…' : 'Clear that month' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div
     class="modal fade"
     id="createBudgetModal"

@@ -3,19 +3,22 @@ import DashboardView from './views/DashboardView.vue';
 import BudgetsView from './views/BudgetsView.vue';
 import TransactionsView from './views/TransactionsView.vue';
 import GoalsView from './views/GoalsView.vue';
-import ImportExportView from './views/ImportExportView.vue';
 import SettingsView from './views/SettingsView.vue';
 import ExpensesView from './views/ExpensesView.vue';
+import CardsView from './views/CardsView.vue';
+import BudgetRecordsView from './views/BudgetRecordsView.vue';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: DashboardView },
   { path: '/budgets', component: BudgetsView },
+  { path: '/budget-records', component: BudgetRecordsView },
   { path: '/transactions', component: TransactionsView },
   { path: '/goals', component: GoalsView },
   { path: '/expenses', component: ExpensesView },
-  { path: '/import-export', component: ImportExportView },
+  { path: '/import-export', redirect: '/transactions' },
   { path: '/settings', component: SettingsView },
+  { path: '/cards', component: CardsView },
 ];
 
 export const router = createRouter({

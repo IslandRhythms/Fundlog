@@ -7,18 +7,49 @@ import type {
   Receipt,
   BudgetCategory,
   BudgetSubcategory,
+  CreditCard,
+  AppPrefs,
 } from './shared/types';
 
 type Theme = 'light' | 'dark' | 'system';
 
+export type DatabaseLocationInfo = {
+  resolvedPath: string;
+  customPath: string | null;
+  envOverride: boolean;
+};
+
 export const api = {
+  database: {
+    getLocation: async (): Promise<DatabaseLocationInfo> =>
+      ipcRenderer.invoke('database:getLocation'),
+    pickPathSave: async (): Promise<string | null> =>
+      ipcRenderer.invoke('database:pickPathSave'),
+    pickPathOpen: async (): Promise<string | null> =>
+      ipcRenderer.invoke('database:pickPathOpen'),
+    setLocation: async (
+      filePath: string | null,
+    ): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('database:setLocation', { filePath }),
+    exportCopy: async (): Promise<
+      | { ok: true; path: string }
+      | { ok: false; canceled: true }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('database:exportCopy'),
+  },
   theme: {
-    get: async (): Promise<Theme> => {
-      return ipcRenderer.invoke('theme:get');
-    },
-    set: async (theme: Theme): Promise<Theme> => {
+    getState: async (): Promise<{
+      preference: Theme;
+      resolved: 'light' | 'dark';
+    }> => ipcRenderer.invoke('theme:getState'),
+    set: async (theme: Theme): Promise<'light' | 'dark'> => {
       return ipcRenderer.invoke('theme:set', theme);
     },
+  },
+  preferences: {
+    get: async (): Promise<AppPrefs> => ipcRenderer.invoke('preferences:get'),
+    set: async (patch: Partial<AppPrefs>): Promise<AppPrefs> =>
+      ipcRenderer.invoke('preferences:set', patch),
   },
   profile: {
     list: async (): Promise<Profile[]> => ipcRenderer.invoke('profile:list'),
@@ -82,6 +113,59 @@ export const api = {
       amount: number;
       description?: string | null;
     }): Promise<Transaction> => ipcRenderer.invoke('transaction:createManual', input),
+    spendSummaryForBudget: async (
+      budgetId: number,
+    ): Promise<{ totalAmount: number; count: number }> =>
+      ipcRenderer.invoke('transaction:spendSummaryForBudget', { budgetId }),
+    clearForBudgetMonth: async (
+      budgetId: number,
+      month: string,
+    ): Promise<{ deleted: number }> =>
+      ipcRenderer.invoke('transaction:clearForBudgetMonth', { budgetId, month }),
+  },
+  card: {
+    listByProfile: async (profileId: number): Promise<CreditCard[]> =>
+      ipcRenderer.invoke('card:listByProfile', { profileId }),
+    create: async (input: {
+      profileId: number;
+      name: string;
+      issuer?: string | null;
+      lastFour?: string | null;
+      network?: string | null;
+      annualFee?: number | null;
+      benefitsNotes?: string | null;
+    }): Promise<CreditCard> => ipcRenderer.invoke('card:create', input),
+    update: async (input: {
+      id: number;
+      name: string;
+      issuer?: string | null;
+      lastFour?: string | null;
+      network?: string | null;
+      annualFee?: number | null;
+      benefitsNotes?: string | null;
+    }): Promise<CreditCard> => ipcRenderer.invoke('card:update', input),
+    delete: async (id: number): Promise<void> =>
+      ipcRenderer.invoke('card:delete', { id }),
+    perkCreate: async (input: {
+      cardId: number;
+      label: string;
+      categoryTags?: string | null;
+      cashbackDetail: string;
+      sortOrder?: number;
+    }): Promise<CreditCard> => ipcRenderer.invoke('card:perk:create', input),
+    perkUpdate: async (input: {
+      id: number;
+      label: string;
+      categoryTags?: string | null;
+      cashbackDetail: string;
+      sortOrder?: number;
+    }): Promise<CreditCard> => ipcRenderer.invoke('card:perk:update', input),
+    perkDelete: async (perkId: number): Promise<void> =>
+      ipcRenderer.invoke('card:perk:delete', { perkId }),
+    setActivePerk: async (args: {
+      cardId: number;
+      perkId: number | null;
+    }): Promise<CreditCard> => ipcRenderer.invoke('card:setActivePerk', args),
   },
   goal: {
     listByProfile: async (profileId: number): Promise<Goal[]> =>
@@ -130,12 +214,6 @@ export const api = {
     }): Promise<Receipt> => ipcRenderer.invoke('receipt:runFakeOcr', input),
   },
 };
-
-declare global {
-  interface Window {
-    fundlog: typeof api;
-  }
-}
 
 contextBridge.exposeInMainWorld('fundlog', api);
 

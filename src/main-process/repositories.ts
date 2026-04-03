@@ -8,11 +8,32 @@ import {
   type Transaction,
   type Goal,
   type Receipt,
+  type CreditCard,
+  type CreditCardPerk,
 } from '../shared/types.js';
 
 const db = (): Database.Database => getDb();
 
 const now = () => new Date().toISOString();
+
+/** `month` is YYYY-MM. Returns [start, endExclusive) as ISO date strings. */
+function isoMonthRange(month: string): { start: string; endExclusive: string } {
+  const m = /^(\d{4})-(\d{2})$/.exec(month.trim());
+  if (!m) throw new TypeError('Invalid month; expected YYYY-MM');
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (mo < 1 || mo > 12) throw new TypeError('Invalid month');
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const start = `${y}-${pad(mo)}-01`;
+  let ny = y;
+  let nm = mo + 1;
+  if (nm > 12) {
+    nm = 1;
+    ny += 1;
+  }
+  const endExclusive = `${ny}-${pad(nm)}-01`;
+  return { start, endExclusive };
+}
 
 export const ProfileRepository = {
   list(): Profile[] {
@@ -304,6 +325,28 @@ export const TransactionRepository = {
       )
       .get(id) as Transaction;
   },
+
+  spendSummaryForBudget(budgetId: number): { totalAmount: number; count: number } {
+    const row = db()
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) AS totalAmount, COUNT(*) AS count
+         FROM transactions WHERE budget_id = ?`,
+      )
+      .get(budgetId) as { totalAmount: number; count: number };
+    return { totalAmount: row.totalAmount, count: row.count };
+  },
+
+  /** Deletes all transactions for this budget whose date falls in the given calendar month. */
+  deleteForBudgetInMonth(budgetId: number, month: string): number {
+    const { start, endExclusive } = isoMonthRange(month);
+    const result = db()
+      .prepare(
+        `DELETE FROM transactions
+         WHERE budget_id = ? AND date >= ? AND date < ?`,
+      )
+      .run(budgetId, start, endExclusive);
+    return result.changes;
+  },
 };
 
 export const GoalRepository = {
@@ -443,6 +486,269 @@ export const ReceiptRepository = {
          WHERE id = ?`
       )
       .get(input.id) as Receipt;
+  },
+};
+
+function mapCreditCardPerk(row: Record<string, unknown>): CreditCardPerk {
+  return {
+    id: row.id as number,
+    cardId: row.cardId as number,
+    label: row.label as string,
+    categoryTags: (row.categoryTags as string | null) ?? null,
+    cashbackDetail: row.cashbackDetail as string,
+    sortOrder: row.sortOrder as number,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+  };
+}
+
+function mapCreditCard(
+  row: Record<string, unknown>,
+  perks: CreditCardPerk[],
+): CreditCard {
+  return {
+    id: row.id as number,
+    profileId: row.profileId as number,
+    name: row.name as string,
+    issuer: (row.issuer as string | null) ?? null,
+    lastFour: (row.lastFour as string | null) ?? null,
+    network: (row.network as string | null) ?? null,
+    annualFee:
+      row.annualFee === null || row.annualFee === undefined
+        ? null
+        : (row.annualFee as number),
+    benefitsNotes: (row.benefitsNotes as string | null) ?? null,
+    activePerkId:
+      row.activePerkId === null || row.activePerkId === undefined
+        ? null
+        : (row.activePerkId as number),
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+    perks,
+  };
+}
+
+export const CreditCardRepository = {
+  listByProfile(profileId: number): CreditCard[] {
+    const rows = db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, name, issuer, last_four AS lastFour,
+                network, annual_fee AS annualFee, benefits_notes AS benefitsNotes,
+                active_perk_id AS activePerkId, created_at AS createdAt, updated_at AS updatedAt
+         FROM credit_cards
+         WHERE profile_id = ?
+         ORDER BY name ASC`,
+      )
+      .all(profileId) as Record<string, unknown>[];
+    return rows.map((row) => {
+      const id = row.id as number;
+      const perkRows = db()
+        .prepare(
+          `SELECT id, card_id AS cardId, label, category_tags AS categoryTags,
+                  cashback_detail AS cashbackDetail, sort_order AS sortOrder,
+                  created_at AS createdAt, updated_at AS updatedAt
+           FROM credit_card_perks
+           WHERE card_id = ?
+           ORDER BY sort_order ASC, id ASC`,
+        )
+        .all(id) as Record<string, unknown>[];
+      const perks = perkRows.map(mapCreditCardPerk);
+      return mapCreditCard(row, perks);
+    });
+  },
+
+  create(input: {
+    profileId: number;
+    name: string;
+    issuer?: string | null;
+    lastFour?: string | null;
+    network?: string | null;
+    annualFee?: number | null;
+    benefitsNotes?: string | null;
+  }): CreditCard {
+    const createdAt = now();
+    const result = db()
+      .prepare(
+        `INSERT INTO credit_cards
+         (profile_id, name, issuer, last_four, network, annual_fee, benefits_notes, active_perk_id, created_at, updated_at)
+         VALUES (@profileId, @name, @issuer, @lastFour, @network, @annualFee, @benefitsNotes, NULL, @createdAt, @createdAt)`,
+      )
+      .run({
+        profileId: input.profileId,
+        name: input.name.trim(),
+        issuer: input.issuer?.trim() || null,
+        lastFour: input.lastFour?.trim() || null,
+        network: input.network?.trim() || null,
+        annualFee: input.annualFee ?? null,
+        benefitsNotes: input.benefitsNotes?.trim() || null,
+        createdAt,
+      });
+    const id = Number(result.lastInsertRowid);
+    return this.listByProfile(input.profileId).find((c) => c.id === id)!;
+  },
+
+  update(input: {
+    id: number;
+    name: string;
+    issuer?: string | null;
+    lastFour?: string | null;
+    network?: string | null;
+    annualFee?: number | null;
+    benefitsNotes?: string | null;
+  }): CreditCard {
+    const updatedAt = now();
+    db()
+      .prepare(
+        `UPDATE credit_cards
+         SET name = @name, issuer = @issuer, last_four = @lastFour, network = @network,
+             annual_fee = @annualFee, benefits_notes = @benefitsNotes, updated_at = @updatedAt
+         WHERE id = @id`,
+      )
+      .run({
+        id: input.id,
+        name: input.name.trim(),
+        issuer: input.issuer?.trim() || null,
+        lastFour: input.lastFour?.trim() || null,
+        network: input.network?.trim() || null,
+        annualFee: input.annualFee ?? null,
+        benefitsNotes: input.benefitsNotes?.trim() || null,
+        updatedAt,
+      });
+    const row = db()
+      .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
+      .get(input.id) as { profileId: number };
+    return this.listByProfile(row.profileId).find((c) => c.id === input.id)!;
+  },
+
+  delete(id: number): void {
+    db().prepare('DELETE FROM credit_cards WHERE id = ?').run(id);
+  },
+
+  createPerk(input: {
+    cardId: number;
+    label: string;
+    categoryTags?: string | null;
+    cashbackDetail: string;
+    sortOrder?: number;
+  }): CreditCard {
+    const createdAt = now();
+    const maxSort =
+      (db()
+        .prepare(
+          'SELECT COALESCE(MAX(sort_order), -1) AS m FROM credit_card_perks WHERE card_id = ?',
+        )
+        .get(input.cardId) as { m: number }).m + 1;
+    db()
+      .prepare(
+        `INSERT INTO credit_card_perks
+         (card_id, label, category_tags, cashback_detail, sort_order, created_at, updated_at)
+         VALUES (@cardId, @label, @categoryTags, @cashbackDetail, @sortOrder, @createdAt, @createdAt)`,
+      )
+      .run({
+        cardId: input.cardId,
+        label: input.label.trim(),
+        categoryTags: input.categoryTags?.trim() || null,
+        cashbackDetail: input.cashbackDetail.trim(),
+        sortOrder: input.sortOrder ?? maxSort,
+        createdAt,
+      });
+    const pid = (
+      db()
+        .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
+        .get(input.cardId) as { profileId: number }
+    ).profileId;
+    return this.listByProfile(pid).find((c) => c.id === input.cardId)!;
+  },
+
+  updatePerk(input: {
+    id: number;
+    label: string;
+    categoryTags?: string | null;
+    cashbackDetail: string;
+    sortOrder?: number;
+  }): CreditCard {
+    const updatedAt = now();
+    if (input.sortOrder != null) {
+      db()
+        .prepare(
+          `UPDATE credit_card_perks
+           SET label = @label, category_tags = @categoryTags, cashback_detail = @cashbackDetail,
+               sort_order = @sortOrder, updated_at = @updatedAt
+           WHERE id = @id`,
+        )
+        .run({
+          id: input.id,
+          label: input.label.trim(),
+          categoryTags: input.categoryTags?.trim() || null,
+          cashbackDetail: input.cashbackDetail.trim(),
+          sortOrder: input.sortOrder,
+          updatedAt,
+        });
+    } else {
+      db()
+        .prepare(
+          `UPDATE credit_card_perks
+           SET label = @label, category_tags = @categoryTags, cashback_detail = @cashbackDetail,
+               updated_at = @updatedAt
+           WHERE id = @id`,
+        )
+        .run({
+          id: input.id,
+          label: input.label.trim(),
+          categoryTags: input.categoryTags?.trim() || null,
+          cashbackDetail: input.cashbackDetail.trim(),
+          updatedAt,
+        });
+    }
+    const row = db()
+      .prepare(
+        'SELECT card_id AS cardId FROM credit_card_perks WHERE id = ?',
+      )
+      .get(input.id) as { cardId: number };
+    const pid = (
+      db()
+        .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
+        .get(row.cardId) as { profileId: number }
+    ).profileId;
+    return this.listByProfile(pid).find((c) => c.id === row.cardId)!;
+  },
+
+  deletePerk(perkId: number): void {
+    const row = db()
+      .prepare(
+        'SELECT card_id AS cardId FROM credit_card_perks WHERE id = ?',
+      )
+      .get(perkId) as { cardId: number } | undefined;
+    if (!row) return;
+    db().prepare('DELETE FROM credit_card_perks WHERE id = ?').run(perkId);
+    db()
+      .prepare(
+        'UPDATE credit_cards SET active_perk_id = NULL WHERE id = ? AND active_perk_id = ?',
+      )
+      .run(row.cardId, perkId);
+  },
+
+  setActivePerk(cardId: number, perkId: number | null): CreditCard {
+    if (perkId != null) {
+      const ok = db()
+        .prepare(
+          'SELECT 1 FROM credit_card_perks WHERE id = ? AND card_id = ?',
+        )
+        .get(perkId, cardId);
+      if (!ok) throw new Error('Perk does not belong to this card');
+    }
+    const updatedAt = now();
+    db()
+      .prepare(
+        'UPDATE credit_cards SET active_perk_id = ?, updated_at = ? WHERE id = ?',
+      )
+      .run(perkId, updatedAt, cardId);
+    const pid = (
+      db()
+        .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
+        .get(cardId) as { profileId: number }
+    ).profileId;
+    return this.listByProfile(pid).find((c) => c.id === cardId)!;
   },
 };
 

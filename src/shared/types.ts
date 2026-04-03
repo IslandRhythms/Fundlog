@@ -101,3 +101,53 @@ export interface Setting {
   value: string;
 }
 
+export interface CreditCardPerk {
+  id: number;
+  cardId: number;
+  label: string;
+  categoryTags: string | null;
+  cashbackDetail: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreditCard {
+  id: number;
+  profileId: number;
+  name: string;
+  issuer: string | null;
+  lastFour: string | null;
+  network: string | null;
+  annualFee: number | null;
+  benefitsNotes: string | null;
+  activePerkId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  perks: CreditCardPerk[];
+}
+
+/** Optional overrides for CSS variables (hex or any valid CSS color). */
+export type CustomThemeColors = Partial<{
+  bg: string;
+  shellBg: string;
+  cardBg: string;
+  cardText: string;
+  text: string;
+  textH: string;
+  muted: string;
+  border: string;
+  cardBorder: string;
+  accent: string;
+}>;
+
+export type CustomThemeConfig = {
+  enabled: boolean;
+  colors: CustomThemeColors;
+};
+
+export type AppPrefs = {
+  databasePath?: string;
+  customTheme?: CustomThemeConfig | null;
+};
+

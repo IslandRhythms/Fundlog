@@ -25,9 +25,16 @@ const data = computed<ChartData<'pie'>>(() => ({
     },
   ],
 }));
+
+const options = {
+  responsive: true,
+  maintainAspectRatio: true,
+};
 </script>
 
 <template>
-  <Pie :data="data" />
+  <div class="category-pie-chart">
+    <Pie :data="data" :options="options" />
+  </div>
 </template>
 

@@ -1,74 +1,124 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useUiStore } from './stores/ui';
+import logoAndTitleUrl from './assets/logo-and-title.png';
 
 const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
 
-const navItems = [
-  { path: '/dashboard', label: 'Dashboard' },
-  { path: '/budgets', label: 'Budgets' },
-  { path: '/transactions', label: 'Transactions' },
-  { path: '/goals', label: 'Goals' },
-  { path: '/expenses', label: 'Expenses' },
-  { path: '/import-export', label: 'Import / Export' },
-  { path: '/settings', label: 'Settings' },
+type NavItem = { path: string; label: string };
+type NavSection = { heading: string; items: NavItem[] };
+
+/** Task flow: overview → day-to-day → budget work → longer-term planning → cards; settings last. */
+const navSections: NavSection[] = [
+  { heading: 'Overview', items: [{ path: '/dashboard', label: 'Dashboard' }] },
+  { heading: 'Activity', items: [{ path: '/transactions', label: 'Transactions' }] },
+  {
+    heading: 'Budgets',
+    items: [
+      { path: '/budgets', label: 'Budgets' },
+      { path: '/budget-records', label: 'Budget Records' },
+    ],
+  },
+  {
+    heading: 'Planning',
+    items: [
+      { path: '/goals', label: 'Goals' },
+      { path: '/expenses', label: 'Expenses' },
+    ],
+  },
+  { heading: 'Credit', items: [{ path: '/cards', label: 'Cards' }] },
 ];
 
-onMounted(() => {
-  ui.initTheme();
-});
+const settingsNav: NavItem = { path: '/settings', label: 'Settings' };
 
 function go(path: string) {
   router.push(path);
+}
+
+function navItemActive(path: string) {
+  return route.path === path;
 }
 </script>
 
 <template>
   <div class="app-shell container-fluid">
-    <div class="row flex-lg-nowrap">
+    <div class="row flex-lg-nowrap g-0 sidebar-layout-row">
       <aside class="sidebar col-auto d-flex flex-column">
-        <div class="sidebar-header d-flex align-items-center mb-3">
-          <div class="logo-circle me-2">F</div>
-          <div class="brand">
-            <div class="brand-name">Fundlog</div>
-            <div class="brand-subtitle">Personal budgeting</div>
-          </div>
+        <div class="sidebar-header sidebar-header--brand mb-3">
+          <img
+            :src="logoAndTitleUrl"
+            alt="Fundlog"
+            class="sidebar-brand-image"
+            decoding="async"
+          />
         </div>
-        <nav class="sidebar-nav nav nav-pills flex-column mb-auto">
-          <button
-            v-for="item in navItems"
-            :key="item.path"
-            class="nav-item btn btn-link text-start text-decoration-none"
-            :class="{ active: route.path === item.path }"
-            type="button"
-            @click="go(item.path)"
+        <nav class="sidebar-nav nav nav-pills flex-column" aria-label="Main">
+          <div
+            v-for="(section, si) in navSections"
+            :key="section.heading"
+            class="sidebar-nav-section"
+            :class="{ 'sidebar-nav-section--first': si === 0 }"
           >
-            <span>{{ item.label }}</span>
-          </button>
+            <p class="sidebar-nav-heading">{{ section.heading }}</p>
+            <button
+              v-for="item in section.items"
+              :key="item.path"
+              class="nav-item btn btn-link text-start text-decoration-none"
+              :class="{ active: navItemActive(item.path) }"
+              type="button"
+              @click="go(item.path)"
+            >
+              <span>{{ item.label }}</span>
+            </button>
+          </div>
         </nav>
-        <div class="sidebar-footer mt-auto">
+        <div class="sidebar-bottom-card">
+          <p class="sidebar-nav-heading sidebar-bottom-card__title">App</p>
           <button
             type="button"
-            class="theme-toggle btn btn-outline-light w-100"
-            @click="ui.setTheme(ui.theme === 'dark' ? 'light' : 'dark')"
+            class="sidebar-settings-btn"
+            :class="{ 'sidebar-settings-btn--active': navItemActive(settingsNav.path) }"
+            :aria-current="navItemActive(settingsNav.path) ? 'page' : undefined"
+            @click="go(settingsNav.path)"
           >
-            <span v-if="ui.theme === 'dark'">Switch to light</span>
-            <span v-else>Switch to dark</span>
+            <svg
+              class="sidebar-settings-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              />
+            </svg>
+            <span>{{ settingsNav.label }}</span>
+          </button>
+          <button
+            type="button"
+            class="theme-toggle"
+            :aria-label="
+              ui.resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
+            "
+            @click="ui.setTheme(ui.resolvedTheme === 'dark' ? 'light' : 'dark')"
+          >
+            <span class="theme-toggle-icon" aria-hidden="true">
+              {{ ui.resolvedTheme === 'dark' ? '☀' : '☾' }}
+            </span>
+            <span v-if="ui.resolvedTheme === 'dark'">Light mode</span>
+            <span v-else>Dark mode</span>
           </button>
         </div>
       </aside>
-      <main class="main col px-3 py-3">
-        <header class="topbar d-flex justify-content-between align-items-center mb-3 card p-3">
-          <div class="topbar-title">
-            <h1 class="h4 mb-1">Fundlog</h1>
-            <p class="mb-0 text-muted">
-              Multi-budget planning, receipts, and goals.
-            </p>
-          </div>
-        </header>
+      <main class="main col">
         <section class="main-content">
           <router-view />
         </section>

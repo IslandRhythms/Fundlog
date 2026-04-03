@@ -1,24 +1,75 @@
 import Database from 'better-sqlite3';
 import { app } from 'electron';
-import { join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
+import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 let db: Database.Database | null = null;
 
-function getDbPath() {
-  const override = process.env.FUNDLOG_DB_PATH;
-  if (override) {
-    return override;
-  }
-
+function defaultDbPath(): string {
   const userData = app.getPath('userData');
   const dir = join(userData, 'data');
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
   return join(dir, 'fundlog.db');
+}
+
+/** Resolved path used for the SQLite file (env → prefs → default). */
+export function getResolvedDatabasePath(): string {
+  const envOverride = process.env.FUNDLOG_DB_PATH?.trim();
+  if (envOverride) {
+    return envOverride;
+  }
+
+  const custom = readAppPrefs().databasePath?.trim();
+  if (custom) {
+    const resolved = normalize(custom);
+    const dir = dirname(resolved);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    return resolved;
+  }
+
+  return defaultDbPath();
+}
+
+export function getDatabaseLocationInfo(): {
+  resolvedPath: string;
+  customPath: string | null;
+  envOverride: boolean;
+} {
+  const envOverride = Boolean(process.env.FUNDLOG_DB_PATH?.trim());
+  const custom = readAppPrefs().databasePath?.trim() ?? null;
+  return {
+    resolvedPath: getResolvedDatabasePath(),
+    customPath: custom,
+    envOverride,
+  };
+}
+
+function getDbPath(): string {
+  return getResolvedDatabasePath();
+}
+
+export function closeDb(): void {
+  if (db) {
+    try {
+      db.close();
+    } catch {
+      /* ignore */
+    }
+    db = null;
+  }
+}
+
+/** Close the current connection and open using the latest prefs / env. */
+export function reloadDatabase(): void {
+  closeDb();
+  getDb();
 }
 
 export function getDb() {
@@ -185,6 +236,43 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
       )
       .run(2, now);
+  }
+
+  if (current < 3 && SCHEMA_VERSION >= 3) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      CREATE TABLE credit_cards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        issuer TEXT,
+        last_four TEXT,
+        network TEXT,
+        annual_fee REAL,
+        benefits_notes TEXT,
+        active_perk_id INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE credit_card_perks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        card_id INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        category_tags TEXT,
+        cashback_detail TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (card_id) REFERENCES credit_cards(id) ON DELETE CASCADE
+      );
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+      )
+      .run(3, now);
   }
 }
 

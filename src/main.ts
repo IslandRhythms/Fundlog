@@ -7,7 +7,13 @@ import {
 } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
-import { getDb } from './main-process/db';
+import {
+  getDb,
+  getDatabaseLocationInfo,
+  getResolvedDatabasePath,
+  reloadDatabase,
+} from './main-process/db';
+import { readAppPrefs, writeAppPrefs } from './main-process/app-prefs';
 import {
   ProfileRepository,
   BudgetRepository,
@@ -15,8 +21,9 @@ import {
   GoalRepository,
   CategoryRepository,
   ReceiptRepository,
+  CreditCardRepository,
 } from './main-process/repositories';
-import type { Transaction, Receipt } from './shared/types';
+import type { AppPrefs, Transaction, Receipt } from './shared/types';
 
 if (started) {
   app.quit();
@@ -79,15 +86,141 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection in main process:', reason);
 });
 
-ipcMain.handle('theme:get', () => {
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-});
+ipcMain.handle('theme:getState', () => ({
+  preference: nativeTheme.themeSource,
+  resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+}));
 
 ipcMain.handle(
   'theme:set',
   (_event, theme: 'light' | 'dark' | 'system') => {
     nativeTheme.themeSource = theme;
     return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  },
+);
+
+ipcMain.handle('preferences:get', () => readAppPrefs());
+
+ipcMain.handle('preferences:set', (_event, patch: Partial<AppPrefs>) => {
+  const cur = readAppPrefs();
+  const next: AppPrefs = { ...cur, ...patch };
+  writeAppPrefs(next);
+  return next;
+});
+
+ipcMain.handle('database:getLocation', () => {
+  return getDatabaseLocationInfo();
+});
+
+ipcMain.handle('database:pickPathSave', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const defaultPath = path.join(app.getPath('documents'), 'fundlog.db');
+  const r = await dialog.showSaveDialog(win ?? undefined, {
+    title: 'Choose database file location',
+    defaultPath,
+    filters: [{ name: 'SQLite database', extensions: ['db'] }],
+  });
+  if (r.canceled || !r.filePath) return null;
+  return r.filePath;
+});
+
+ipcMain.handle('database:pickPathOpen', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const r = await dialog.showOpenDialog(win ?? undefined, {
+    title: 'Select Fundlog database file',
+    filters: [{ name: 'SQLite database', extensions: ['db'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  return r.filePaths[0];
+});
+
+ipcMain.handle(
+  'database:setLocation',
+  (
+    _event,
+    args: { filePath: string | null },
+  ): { ok: true } | { ok: false; error: string } => {
+    if (process.env.FUNDLOG_DB_PATH?.trim()) {
+      return {
+        ok: false,
+        error:
+          'Database path is controlled by the FUNDLOG_DB_PATH environment variable.',
+      };
+    }
+    const previous = readAppPrefs();
+    try {
+      if (args.filePath === null || args.filePath.trim() === '') {
+        const next = { ...previous };
+        delete next.databasePath;
+        writeAppPrefs(next);
+      } else {
+        writeAppPrefs({
+          ...previous,
+          databasePath: path.normalize(args.filePath.trim()),
+        });
+      }
+      reloadDatabase();
+      return { ok: true };
+    } catch (err) {
+      writeAppPrefs(previous);
+      try {
+        reloadDatabase();
+      } catch (revertErr) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to reopen database after reverting prefs:', revertErr);
+      }
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'database:exportCopy',
+  async (
+    event,
+  ): Promise<
+    | { ok: true; path: string }
+    | { ok: false; canceled: true }
+    | { ok: false; error: string }
+  > => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const defaultPath = path.join(
+      app.getPath('documents'),
+      `fundlog-export-${stamp}.db`,
+    );
+    const r = await dialog.showSaveDialog(win ?? undefined, {
+      title: 'Export database copy',
+      defaultPath,
+      filters: [{ name: 'SQLite database', extensions: ['db'] }],
+    });
+    if (r.canceled || !r.filePath) {
+      return { ok: false, canceled: true };
+    }
+
+    const dest = path.normalize(r.filePath.trim());
+    const src = getResolvedDatabasePath();
+    if (path.resolve(dest) === path.resolve(src)) {
+      return {
+        ok: false,
+        error:
+          'Choose a different path than the database file Fundlog is using.',
+      };
+    }
+
+    try {
+      await getDb().backup(dest);
+      return { ok: true, path: dest };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   },
 );
 
@@ -186,6 +319,117 @@ ipcMain.handle(
   'transaction:listUnexpected',
   (_event, args: { profileId: number; budgetId: number }) => {
     return TransactionRepository.listUnexpected(args.profileId, args.budgetId);
+  },
+);
+
+ipcMain.handle(
+  'transaction:spendSummaryForBudget',
+  (_event, args: { budgetId: number }) => {
+    return TransactionRepository.spendSummaryForBudget(args.budgetId);
+  },
+);
+
+ipcMain.handle(
+  'transaction:clearForBudgetMonth',
+  (
+    _event,
+    args: { budgetId: number; month: string },
+  ): { deleted: number } => {
+    const deleted = TransactionRepository.deleteForBudgetInMonth(
+      args.budgetId,
+      args.month,
+    );
+    return { deleted };
+  },
+);
+
+ipcMain.handle(
+  'card:listByProfile',
+  (_event, args: { profileId: number }) => {
+    return CreditCardRepository.listByProfile(args.profileId);
+  },
+);
+
+ipcMain.handle(
+  'card:create',
+  (
+    _event,
+    args: {
+      profileId: number;
+      name: string;
+      issuer?: string | null;
+      lastFour?: string | null;
+      network?: string | null;
+      annualFee?: number | null;
+      benefitsNotes?: string | null;
+    },
+  ) => {
+    return CreditCardRepository.create(args);
+  },
+);
+
+ipcMain.handle(
+  'card:update',
+  (
+    _event,
+    args: {
+      id: number;
+      name: string;
+      issuer?: string | null;
+      lastFour?: string | null;
+      network?: string | null;
+      annualFee?: number | null;
+      benefitsNotes?: string | null;
+    },
+  ) => {
+    return CreditCardRepository.update(args);
+  },
+);
+
+ipcMain.handle('card:delete', (_event, args: { id: number }) => {
+  CreditCardRepository.delete(args.id);
+});
+
+ipcMain.handle(
+  'card:perk:create',
+  (
+    _event,
+    args: {
+      cardId: number;
+      label: string;
+      categoryTags?: string | null;
+      cashbackDetail: string;
+      sortOrder?: number;
+    },
+  ) => {
+    return CreditCardRepository.createPerk(args);
+  },
+);
+
+ipcMain.handle(
+  'card:perk:update',
+  (
+    _event,
+    args: {
+      id: number;
+      label: string;
+      categoryTags?: string | null;
+      cashbackDetail: string;
+      sortOrder?: number;
+    },
+  ) => {
+    return CreditCardRepository.updatePerk(args);
+  },
+);
+
+ipcMain.handle('card:perk:delete', (_event, args: { perkId: number }) => {
+  CreditCardRepository.deletePerk(args.perkId);
+});
+
+ipcMain.handle(
+  'card:setActivePerk',
+  (_event, args: { cardId: number; perkId: number | null }) => {
+    return CreditCardRepository.setActivePerk(args.cardId, args.perkId);
   },
 );
 

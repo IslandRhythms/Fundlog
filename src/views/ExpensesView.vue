@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import type { BudgetCategory, BudgetSubcategory, Transaction } from '../shared/types';
 
@@ -136,6 +137,8 @@ async function addUnexpected() {
     <p v-if="!activeBudget" class="status-text">
       Create and select a budget first to record expenses.
     </p>
+
+    <LoadingView v-else-if="loading" message="Loading expenses…" />
 
     <div v-else class="row g-3">
       <div class="col-12">

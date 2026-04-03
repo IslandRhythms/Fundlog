@@ -7,9 +7,11 @@ import 'bootstrap/dist/js/bootstrap.bundle.min.js';
 import './style.css';
 import App from './App.vue';
 import { router } from './router';
+import { useUiStore } from './stores/ui';
 
 const app = createApp(App);
-app.use(createPinia());
+const pinia = createPinia();
+app.use(pinia);
 app.use(router);
 app.use(Toast, {
   position: 'top-right',
@@ -29,5 +31,8 @@ app.config.errorHandler = (err, _instance, _info) => {
   console.error(err);
 };
 
-app.mount('#app');
+void (async () => {
+  await useUiStore().initTheme();
+  app.mount('#app');
+})();
 

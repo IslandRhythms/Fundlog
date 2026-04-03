@@ -8,9 +8,33 @@ declare module '*.vue' {
 
 interface Window {
   fundlog: {
+    database: {
+      getLocation(): Promise<{
+        resolvedPath: string;
+        customPath: string | null;
+        envOverride: boolean;
+      }>;
+      pickPathSave(): Promise<string | null>;
+      pickPathOpen(): Promise<string | null>;
+      setLocation(filePath: string | null): Promise<
+        { ok: true } | { ok: false; error: string }
+      >;
+      exportCopy(): Promise<
+        | { ok: true; path: string }
+        | { ok: false; canceled: true }
+        | { ok: false; error: string }
+      >;
+    };
     theme: {
-      get(): Promise<'light' | 'dark' | 'system'>;
-      set(theme: 'light' | 'dark' | 'system'): Promise<'light' | 'dark' | 'system'>;
+      getState(): Promise<{
+        preference: 'light' | 'dark' | 'system';
+        resolved: 'light' | 'dark';
+      }>;
+      set(theme: 'light' | 'dark' | 'system'): Promise<'light' | 'dark'>;
+    };
+    preferences: {
+      get(): Promise<import('./shared/types').AppPrefs>;
+      set(patch: Partial<import('./shared/types').AppPrefs>): Promise<import('./shared/types').AppPrefs>;
     };
     profile: {
       list(): Promise<import('./shared/types').Profile[]>;
@@ -30,11 +54,101 @@ interface Window {
         ruleSet: string;
       }): Promise<import('./shared/types').Budget>;
     };
+    category: {
+      listByBudget(budgetId: number): Promise<{
+        categories: import('./shared/types').BudgetCategory[];
+        subcategories: import('./shared/types').BudgetSubcategory[];
+      }>;
+      updateColor(input: {
+        id: number;
+        color: string;
+        budgetId: number;
+      }): Promise<{
+        categories: import('./shared/types').BudgetCategory[];
+        subcategories: import('./shared/types').BudgetSubcategory[];
+      }>;
+    };
+    subcategory: {
+      create(input: {
+        budgetId: number;
+        parentCategoryId: number | null;
+        label: string;
+        targetPercent?: number | null;
+        targetAmount?: number | null;
+        minAmount?: number | null;
+        maxAmount?: number | null;
+        isFlexible: boolean;
+        sortOrder?: number;
+      }): Promise<{
+        categories: import('./shared/types').BudgetCategory[];
+        subcategories: import('./shared/types').BudgetSubcategory[];
+      }>;
+    };
     transaction: {
       listByBudget(
         profileId: number,
         budgetId: number | null
       ): Promise<import('./shared/types').Transaction[]>;
+      listUnexpected(
+        profileId: number,
+        budgetId: number
+      ): Promise<import('./shared/types').Transaction[]>;
+      createManual(input: {
+        profileId: number;
+        budgetId: number;
+        subcategoryId: number | null;
+        date: string;
+        amount: number;
+        description?: string | null;
+      }): Promise<import('./shared/types').Transaction>;
+      spendSummaryForBudget(
+        budgetId: number,
+      ): Promise<{ totalAmount: number; count: number }>;
+      clearForBudgetMonth(
+        budgetId: number,
+        month: string,
+      ): Promise<{ deleted: number }>;
+    };
+    card: {
+      listByProfile(profileId: number): Promise<import('./shared/types').CreditCard[]>;
+      create(input: {
+        profileId: number;
+        name: string;
+        issuer?: string | null;
+        lastFour?: string | null;
+        network?: string | null;
+        annualFee?: number | null;
+        benefitsNotes?: string | null;
+      }): Promise<import('./shared/types').CreditCard>;
+      update(input: {
+        id: number;
+        name: string;
+        issuer?: string | null;
+        lastFour?: string | null;
+        network?: string | null;
+        annualFee?: number | null;
+        benefitsNotes?: string | null;
+      }): Promise<import('./shared/types').CreditCard>;
+      delete(id: number): Promise<void>;
+      perkCreate(input: {
+        cardId: number;
+        label: string;
+        categoryTags?: string | null;
+        cashbackDetail: string;
+        sortOrder?: number;
+      }): Promise<import('./shared/types').CreditCard>;
+      perkUpdate(input: {
+        id: number;
+        label: string;
+        categoryTags?: string | null;
+        cashbackDetail: string;
+        sortOrder?: number;
+      }): Promise<import('./shared/types').CreditCard>;
+      perkDelete(perkId: number): Promise<void>;
+      setActivePerk(args: {
+        cardId: number;
+        perkId: number | null;
+      }): Promise<import('./shared/types').CreditCard>;
     };
     goal: {
       listByProfile(profileId: number): Promise<import('./shared/types').Goal[]>;
@@ -82,3 +196,4 @@ interface Window {
   };
 }
 
+declare module 'bootstrap';
