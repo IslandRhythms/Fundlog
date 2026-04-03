@@ -1,15 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { Modal } from 'bootstrap';
 import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
+import { hideBsModal } from '../shared/hideBsModal';
 import type { CreditCard, CreditCardPerk } from '../shared/types';
-
-function hideBsModal(elementId: string) {
-  const el = document.getElementById(elementId);
-  if (el) Modal.getOrCreateInstance(el).hide();
-}
 
 const domain = useDomainStore();
 const toast = useToast();

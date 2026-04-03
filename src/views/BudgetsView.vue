@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { Modal } from 'bootstrap';
 import { useToast } from 'vue-toastification';
 import { useDomainStore } from '../stores/domain';
+import { hideBsModal } from '../shared/hideBsModal';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import {
   computePlannedExpenseBarSegments,
@@ -17,11 +17,6 @@ const existingBudgetsExpanded = ref(true);
 
 const clearActivityMonth = ref('');
 const clearingMonth = ref(false);
-
-function hideBsModal(elementId: string) {
-  const el = document.getElementById(elementId);
-  if (el) Modal.getOrCreateInstance(el).hide();
-}
 
 function openClearMonthModal() {
   const d = new Date();
@@ -90,17 +85,19 @@ function formatFiftyThirtyTwentyAmount(income: number, percent: number) {
 
 async function submit() {
   if (!name.value || !startMonth.value || !monthlyIncome.value) return;
-  await domain.createBudget({
+  const ok = await domain.createBudget({
     name: name.value.trim(),
     startMonth: startMonth.value,
     monthlyIncome: monthlyIncome.value,
     ruleSet: ruleSet.value,
   });
+  if (!ok) return;
   name.value = '';
   startMonth.value = '';
   monthlyIncome.value = null;
   ruleSet.value = 'fiftyThirtyTwenty';
   await loadCategories();
+  hideBsModal('createBudgetModal');
 }
 
 async function loadCategories() {

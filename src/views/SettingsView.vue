@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
+import { hideBsModal } from '../shared/hideBsModal';
 import { useUiStore } from '../stores/ui';
 import type { AppPrefs, CustomThemeColors } from '../shared/types';
 
@@ -230,13 +231,15 @@ const theme = computed({
 
 async function submitProfile() {
   if (!profileName.value || !profileStartingMonth.value) return;
-  await domain.createProfile({
+  const ok = await domain.createProfile({
     name: profileName.value.trim(),
     currencyCode: profileCurrency.value.trim() || 'USD',
     startingMonth: profileStartingMonth.value,
   });
+  if (!ok) return;
   profileName.value = '';
   profileStartingMonth.value = '';
+  hideBsModal('createProfileModal');
 }
 </script>
 

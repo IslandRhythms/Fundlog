@@ -38,7 +38,7 @@ export const useDomainStore = defineStore('domain', {
       name: string;
       currencyCode: string;
       startingMonth: string;
-    }) {
+    }): Promise<boolean> {
       const { useToast } = await import('vue-toastification');
       const toast = useToast();
       try {
@@ -47,9 +47,11 @@ export const useDomainStore = defineStore('domain', {
         this.activeProfileId = profile.id;
         await this.loadBudgets();
         toast.success('Profile created.');
+        return true;
       } catch (err) {
         console.error(err);
         toast.error('Failed to create profile.');
+        return false;
       }
     },
     async loadBudgets() {
@@ -74,7 +76,7 @@ export const useDomainStore = defineStore('domain', {
       startMonth: string;
       monthlyIncome: number;
       ruleSet: string;
-    }) {
+    }): Promise<boolean> {
       const { useToast } = await import('vue-toastification');
       const toast = useToast();
       try {
@@ -100,9 +102,11 @@ export const useDomainStore = defineStore('domain', {
         this.activeBudgetId = budget.id;
         await this.loadTransactions();
         toast.success('Budget created.');
+        return true;
       } catch (err) {
         console.error(err);
         toast.error('Failed to create budget.');
+        return false;
       }
     },
     async loadTransactions() {
@@ -138,8 +142,8 @@ export const useDomainStore = defineStore('domain', {
       targetDate?: string | null;
       priority?: number;
       note?: string | null;
-    }) {
-      if (!this.activeProfileId) return;
+    }): Promise<boolean> {
+      if (!this.activeProfileId) return false;
       const { useToast } = await import('vue-toastification');
       const toast = useToast();
       try {
@@ -149,9 +153,11 @@ export const useDomainStore = defineStore('domain', {
         });
         this.goals.unshift(goal);
         toast.success('Goal created.');
+        return true;
       } catch (err) {
         console.error(err);
         toast.error('Failed to create goal.');
+        return false;
       }
     },
   },

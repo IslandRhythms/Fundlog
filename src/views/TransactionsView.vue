@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
+import { hideBsModal } from '../shared/hideBsModal';
 import type { Transaction, Receipt } from '../shared/types';
 
 const domain = useDomainStore();
@@ -100,6 +101,7 @@ async function doImport() {
     await domain.loadTransactions();
     importStatus.value = `Imported ${rows.length} row(s) into the current budget.`;
     rawCsv.value = '';
+    hideBsModal('importCsvModal');
   } catch (err) {
     console.error(err);
     importStatus.value = 'Failed to import CSV.';
@@ -128,6 +130,7 @@ async function doExport() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     exportStatus.value = `Exported ${result.count} transaction(s) to CSV.`;
+    hideBsModal('exportCsvModal');
   } catch (err) {
     console.error(err);
     exportStatus.value = 'Failed to export CSV.';

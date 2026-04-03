@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useDomainStore } from '../stores/domain';
+import { hideBsModal } from '../shared/hideBsModal';
 
 const domain = useDomainStore();
 
@@ -21,18 +22,20 @@ const goals = computed(() =>
 
 async function submit() {
   if (!name.value || !targetAmount.value) return;
-  await domain.createGoal({
+  const ok = await domain.createGoal({
     name: name.value.trim(),
     targetAmount: targetAmount.value,
     targetDate: targetDate.value,
     priority: priority.value,
     note: note.value || null,
   });
+  if (!ok) return;
   name.value = '';
   targetAmount.value = null;
   targetDate.value = null;
   priority.value = 1;
   note.value = '';
+  hideBsModal('createGoalModal');
 }
 </script>
 

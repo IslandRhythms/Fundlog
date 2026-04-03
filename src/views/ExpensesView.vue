@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
+import { hideBsModal } from '../shared/hideBsModal';
 import type { BudgetCategory, BudgetSubcategory, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
+const toast = useToast();
 
 const loading = ref(false);
 const categories = ref<BudgetCategory[]>([]);
@@ -112,18 +115,24 @@ async function addUnexpected() {
     return;
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
-  await (window as any).fundlog.transaction.createManual({
-    profileId: domain.activeProfileId,
-    budgetId: activeBudget.value.id,
-    subcategoryId: categoryId.value,
-    date,
-    amount: amount.value,
-    description: label.value.trim(),
-  });
-  amount.value = null;
-  categoryId.value = null;
-  label.value = '';
-  await loadData();
+  try {
+    await (window as any).fundlog.transaction.createManual({
+      profileId: domain.activeProfileId,
+      budgetId: activeBudget.value.id,
+      subcategoryId: categoryId.value,
+      date,
+      amount: amount.value,
+      description: label.value.trim(),
+    });
+    amount.value = null;
+    categoryId.value = null;
+    label.value = '';
+    await loadData();
+    hideBsModal('addUnexpectedModal');
+  } catch (e) {
+    console.error(e);
+    toast.error('Could not add expense.');
+  }
 }
 </script>
 
