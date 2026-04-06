@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Profile,
   Budget,
+  BudgetMonthIncomeBoost,
   Transaction,
   Goal,
   Receipt,
@@ -69,6 +70,19 @@ export const api = {
       monthlyIncome: number;
       ruleSet: string;
     }): Promise<Budget> => ipcRenderer.invoke('budget:create', input),
+  },
+  budgetIncomeBoost: {
+    listByProfile: async (profileId: number): Promise<BudgetMonthIncomeBoost[]> =>
+      ipcRenderer.invoke('budgetIncomeBoost:listByProfile', { profileId }),
+    create: async (input: {
+      budgetId: number;
+      month: string;
+      amount: number;
+      label?: string | null;
+    }): Promise<BudgetMonthIncomeBoost> =>
+      ipcRenderer.invoke('budgetIncomeBoost:create', input),
+    delete: async (id: number): Promise<void> =>
+      ipcRenderer.invoke('budgetIncomeBoost:delete', { id }),
   },
   category: {
     listByBudget: async (

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
@@ -8,6 +9,7 @@ import {
   computePlannedExpenseBarSegments,
   plannedAmountFromSub,
 } from '../shared/plannedExpenseBar';
+import { calendarMonthNow } from '../shared/calendarMonth';
 import type { BudgetCategory, BudgetSubcategory, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
@@ -78,6 +80,18 @@ const budgets = computed(() =>
 
 const activeBudget = computed(() => domain.activeBudget);
 
+const planningMonthIncome = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return 0;
+  return domain.effectiveMonthlyIncomeFor(b.id, calendarMonthNow());
+});
+
+const monthIncomeBoost = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return 0;
+  return domain.incomeBoostSumForBudgetMonth(b.id, calendarMonthNow());
+});
+
 function formatFiftyThirtyTwentyAmount(income: number, percent: number) {
   const value = (income * percent) / 100;
   return value.toLocaleString();
@@ -125,8 +139,8 @@ const groupedSubcategories = computed(() => {
 const plannedAmount = plannedAmountFromSub;
 
 const percentOfBudget = (sub: BudgetSubcategory) => {
-  if (!activeBudget.value || !activeBudget.value.monthlyIncome) return 0;
-  const income = activeBudget.value.monthlyIncome;
+  if (!activeBudget.value || !planningMonthIncome.value) return 0;
+  const income = planningMonthIncome.value;
   const amt = plannedAmount(sub);
   if (!amt) return 0;
   return Math.min(100, (amt / income) * 100);
@@ -138,7 +152,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
-    activeBudget.value?.monthlyIncome ?? 0,
+    planningMonthIncome.value,
   ),
 );
 
@@ -147,7 +161,7 @@ const totalPlanned = computed(() => plannedBarResult.value.totalPlanned);
 const totalUnexpected = computed(() => plannedBarResult.value.totalUnexpected);
 
 const totalPercent = computed(() => {
-  if (!activeBudget.value?.monthlyIncome) return 0;
+  if (!planningMonthIncome.value) return 0;
   return plannedBarResult.value.combinedOfIncomePct;
 });
 
@@ -216,6 +230,13 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
       >
         Start clean month…
       </button>
+      <RouterLink
+        v-if="activeBudget"
+        to="/extra-income"
+        class="btn btn-outline-secondary"
+      >
+        Extra income
+      </RouterLink>
     </div>
 
     <section class="card budgets-existing-card stacked-section mb-3">
@@ -303,16 +324,25 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
             </h3>
             <p class="small text-muted mb-2">
               Configure fixed and variable expenses within each category. Unexpected expenses
-              from the Expenses page are included by category.
+              from the Expenses page are included by category. Percentages below use
+              <strong>this calendar month’s</strong> effective income (budget base plus
+              <RouterLink to="/extra-income">Extra income</RouterLink>
+              for the month).
+            </p>
+            <p v-if="monthIncomeBoost > 0" class="small text-muted mb-2">
+              This month: base {{ activeBudget.monthlyIncome.toLocaleString() }} +
+              {{ monthIncomeBoost.toLocaleString() }} extra =
+              <strong>{{ planningMonthIncome.toLocaleString() }}</strong>
+              effective.
             </p>
             <div class="mb-1 d-flex flex-wrap justify-content-between gap-2 small">
               <span>Planned line items</span>
               <span>
                 {{ plannedBarResult.totalPlanned.toLocaleString() }}
-                <span v-if="activeBudget.monthlyIncome" class="text-muted">
+                <span v-if="planningMonthIncome" class="text-muted">
                   ({{
                     (
-                      (plannedBarResult.totalPlanned / activeBudget.monthlyIncome) *
+                      (plannedBarResult.totalPlanned / planningMonthIncome) *
                       100
                     ).toFixed(1)
                   }}% of income)
@@ -323,10 +353,13 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
               <span>Unexpected (manual)</span>
               <span>
                 {{ plannedBarResult.totalUnexpected.toLocaleString() }}
-                <span v-if="activeBudget.monthlyIncome && plannedBarResult.totalUnexpected" class="text-muted">
+                <span
+                  v-if="planningMonthIncome && plannedBarResult.totalUnexpected"
+                  class="text-muted"
+                >
                   ({{
                     (
-                      (plannedBarResult.totalUnexpected / activeBudget.monthlyIncome) *
+                      (plannedBarResult.totalUnexpected / planningMonthIncome) *
                       100
                     ).toFixed(1)
                   }}% of income)
@@ -546,7 +579,7 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
     aria-labelledby="clearMonthModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="clearMonthModalLabel" class="modal-title">Start a clean month</h5>
@@ -605,7 +638,7 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
     aria-labelledby="createBudgetModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="createBudgetModalLabel">Create budget</h5>

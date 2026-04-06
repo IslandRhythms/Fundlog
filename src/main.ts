@@ -17,6 +17,7 @@ import { readAppPrefs, writeAppPrefs } from './main-process/app-prefs';
 import {
   ProfileRepository,
   BudgetRepository,
+  BudgetMonthIncomeBoostRepository,
   TransactionRepository,
   GoalRepository,
   CategoryRepository,
@@ -264,6 +265,35 @@ ipcMain.handle(
     });
     CategoryRepository.ensureDefaultRuleCategories(budget.id, budget.ruleSet);
     return budget;
+  },
+);
+
+ipcMain.handle(
+  'budgetIncomeBoost:listByProfile',
+  (_event, args: { profileId: number }) => {
+    return BudgetMonthIncomeBoostRepository.listByProfile(args.profileId);
+  },
+);
+
+ipcMain.handle(
+  'budgetIncomeBoost:create',
+  (
+    _event,
+    args: {
+      budgetId: number;
+      month: string;
+      amount: number;
+      label?: string | null;
+    },
+  ) => {
+    return BudgetMonthIncomeBoostRepository.create(args);
+  },
+);
+
+ipcMain.handle(
+  'budgetIncomeBoost:delete',
+  (_event, args: { id: number }) => {
+    BudgetMonthIncomeBoostRepository.delete(args.id);
   },
 );
 

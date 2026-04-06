@@ -343,7 +343,7 @@ function goTo(path: string) {
     aria-labelledby="importCsvModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="importCsvModalLabel" class="modal-title">Import CSV</h5>
@@ -388,7 +388,7 @@ function goTo(path: string) {
     aria-labelledby="exportCsvModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="exportCsvModalLabel" class="modal-title">Export CSV</h5>

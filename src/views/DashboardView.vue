@@ -6,6 +6,7 @@ import CategoryPieChart from '../components/CategoryPieChart.vue';
 import LoadingView from '../components/LoadingView.vue';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import { computePlannedExpenseBarSegments } from '../shared/plannedExpenseBar';
+import { calendarMonthNow } from '../shared/calendarMonth';
 import type {
   BudgetCategory,
   BudgetSubcategory,
@@ -67,7 +68,17 @@ onMounted(async () => {
 
 const splitCategories = computed(() => categories.value);
 
-const monthlyIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
+const baseMonthlyIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
+
+const monthlyIncome = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return 0;
+  return domain.effectiveMonthlyIncomeFor(b.id, calendarMonthNow());
+});
+
+const monthIncomeBoost = computed(() =>
+  Math.max(0, monthlyIncome.value - baseMonthlyIncome.value),
+);
 
 const plannedBarResult = computed(() =>
   computePlannedExpenseBarSegments(
@@ -138,7 +149,15 @@ function formatGoalDate(iso: string | null) {
                   </span>
                 </p>
                 <p class="small text-muted mb-2">
-                  Monthly income {{ monthlyIncome.toLocaleString() }}
+                  Monthly income (this calendar month)
+                  {{ monthlyIncome.toLocaleString() }}
+                  <template v-if="monthIncomeBoost > 0">
+                    <span class="d-block mt-1">
+                      Includes {{ monthIncomeBoost.toLocaleString() }} extra from
+                      <RouterLink to="/extra-income">Extra income</RouterLink>
+                      (base {{ baseMonthlyIncome.toLocaleString() }}).
+                    </span>
+                  </template>
                 </p>
 
                 <div class="mb-3">

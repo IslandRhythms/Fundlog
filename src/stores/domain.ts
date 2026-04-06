@@ -1,5 +1,12 @@
 import { defineStore } from 'pinia';
-import type { Profile, Budget, Transaction, Goal } from '../shared/types';
+import type {
+  Profile,
+  Budget,
+  BudgetMonthIncomeBoost,
+  Transaction,
+  Goal,
+} from '../shared/types';
+import { errorMessageFromUnknown } from '../shared/errors';
 
 export const useDomainStore = defineStore('domain', {
   state: () => ({
@@ -7,6 +14,7 @@ export const useDomainStore = defineStore('domain', {
     budgets: [] as Budget[],
     transactions: [] as Transaction[],
     goals: [] as Goal[],
+    budgetIncomeBoosts: [] as BudgetMonthIncomeBoost[],
     activeProfileId: null as number | null,
     activeBudgetId: null as number | null,
   }),
@@ -31,7 +39,7 @@ export const useDomainStore = defineStore('domain', {
         }
       } catch (err) {
         console.error(err);
-        toast.error('Failed to load profiles. Please try again.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to load profiles.'));
       }
     },
     async createProfile(input: {
@@ -50,7 +58,7 @@ export const useDomainStore = defineStore('domain', {
         return true;
       } catch (err) {
         console.error(err);
-        toast.error('Failed to create profile.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to create profile.'));
         return false;
       }
     },
@@ -66,9 +74,10 @@ export const useDomainStore = defineStore('domain', {
             budgets.find((b: Budget) => b.isActive)?.id ?? budgets[0].id;
         }
         await this.loadTransactions();
+        await this.loadBudgetIncomeBoosts();
       } catch (err) {
         console.error(err);
-        toast.error('Failed to load budgets.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to load budgets.'));
       }
     },
     async createBudget(input: {
@@ -101,11 +110,72 @@ export const useDomainStore = defineStore('domain', {
         this.budgets.unshift(budget);
         this.activeBudgetId = budget.id;
         await this.loadTransactions();
+        await this.loadBudgetIncomeBoosts();
         toast.success('Budget created.');
         return true;
       } catch (err) {
         console.error(err);
-        toast.error('Failed to create budget.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to create budget.'));
+        return false;
+      }
+    },
+    async loadBudgetIncomeBoosts() {
+      if (!this.activeProfileId) {
+        this.budgetIncomeBoosts = [];
+        return;
+      }
+      try {
+        this.budgetIncomeBoosts = await window.fundlog.budgetIncomeBoost.listByProfile(
+          this.activeProfileId,
+        );
+      } catch (err) {
+        console.error(err);
+        this.budgetIncomeBoosts = [];
+      }
+    },
+    incomeBoostSumForBudgetMonth(budgetId: number, month: string): number {
+      return this.budgetIncomeBoosts
+        .filter(
+          (r: BudgetMonthIncomeBoost) =>
+            r.budgetId === budgetId && r.month === month,
+        )
+        .reduce((s: number, r: BudgetMonthIncomeBoost) => s + r.amount, 0);
+    },
+    effectiveMonthlyIncomeFor(budgetId: number, month: string): number {
+      const b = this.budgets.find((x: Budget) => x.id === budgetId);
+      const base = b?.monthlyIncome ?? 0;
+      return base + this.incomeBoostSumForBudgetMonth(budgetId, month);
+    },
+    async createIncomeBoost(input: {
+      budgetId: number;
+      month: string;
+      amount: number;
+      label?: string | null;
+    }): Promise<boolean> {
+      const { useToast } = await import('vue-toastification');
+      const toast = useToast();
+      try {
+        await window.fundlog.budgetIncomeBoost.create(input);
+        await this.loadBudgetIncomeBoosts();
+        toast.success('Extra income added for that month.');
+        return true;
+      } catch (err) {
+        console.error(err);
+        toast.error(errorMessageFromUnknown(err, 'Could not add extra income.'));
+        return false;
+      }
+    },
+    async deleteIncomeBoost(id: number): Promise<boolean> {
+      const { useToast } = await import('vue-toastification');
+      const toast = useToast();
+      try {
+        await window.fundlog.budgetIncomeBoost.delete(id);
+        await this.loadBudgetIncomeBoosts();
+        toast.success('Entry removed.');
+        return true;
+      } catch (err) {
+        console.error(err);
+        toast.error(errorMessageFromUnknown(err, 'Could not remove entry.'));
         return false;
       }
     },
@@ -121,7 +191,7 @@ export const useDomainStore = defineStore('domain', {
         this.transactions = tx;
       } catch (err) {
         console.error(err);
-        toast.error('Failed to load transactions.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to load transactions.'));
       }
     },
     async loadGoals() {
@@ -133,7 +203,7 @@ export const useDomainStore = defineStore('domain', {
         this.goals = goals;
       } catch (err) {
         console.error(err);
-        toast.error('Failed to load goals.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to load goals.'));
       }
     },
     async createGoal(input: {
@@ -157,7 +227,7 @@ export const useDomainStore = defineStore('domain', {
         return true;
       } catch (err) {
         console.error(err);
-        toast.error('Failed to create goal.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to create goal.'));
         return false;
       }
     },
@@ -174,12 +244,13 @@ export const useDomainStore = defineStore('domain', {
       const toast = useToast();
       try {
         const updated = await window.fundlog.goal.update(input);
-        const i = this.goals.findIndex((g) => g.id === updated.id);
+        const i = this.goals.findIndex((g: Goal) => g.id === updated.id);
         if (i >= 0) this.goals[i] = updated;
+        toast.success('Goal updated.');
         return true;
       } catch (err) {
         console.error(err);
-        toast.error('Failed to update goal.');
+        toast.error(errorMessageFromUnknown(err, 'Failed to update goal.'));
         return false;
       }
     },

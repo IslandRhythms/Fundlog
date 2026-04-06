@@ -7,10 +7,12 @@ import {
   type BudgetSubcategory,
   type Transaction,
   type Goal,
+  type BudgetMonthIncomeBoost,
   type Receipt,
   type CreditCard,
   type CreditCardPerk,
 } from '../shared/types.js';
+import { errorMessageFromUnknown } from '../shared/errors.js';
 
 const db = (): Database.Database => getDb();
 
@@ -112,6 +114,93 @@ export const BudgetRepository = {
          FROM budgets WHERE id = ?`
       )
       .get(id) as Budget | undefined;
+  },
+};
+
+function boostFromRow(row: Record<string, unknown>): BudgetMonthIncomeBoost {
+  return {
+    id: row.id as number,
+    budgetId: row.budgetId as number,
+    month: row.month as string,
+    amount: row.amount as number,
+    label: (row.label as string | null) ?? null,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+  };
+}
+
+export const BudgetMonthIncomeBoostRepository = {
+  listByProfile(profileId: number): BudgetMonthIncomeBoost[] {
+    const rows = db()
+      .prepare(
+        `SELECT b.id AS id, b.budget_id AS budgetId, b.month AS month, b.amount AS amount,
+                b.label AS label, b.created_at AS createdAt, b.updated_at AS updatedAt
+         FROM budget_month_income_boosts b
+         INNER JOIN budgets bud ON bud.id = b.budget_id
+         WHERE bud.profile_id = ?
+         ORDER BY b.month DESC, b.id DESC`,
+      )
+      .all(profileId) as Record<string, unknown>[];
+    return rows.map(boostFromRow);
+  },
+  create(input: {
+    budgetId: number;
+    month: string;
+    amount: number;
+    label?: string | null;
+  }): BudgetMonthIncomeBoost {
+    const bud = BudgetRepository.getById(input.budgetId);
+    if (!bud) {
+      throw new Error('Budget not found.');
+    }
+    const month = input.month.trim();
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new Error('Month must be YYYY-MM.');
+    }
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new Error('Amount must be a positive number.');
+    }
+    const createdAt = now();
+    const label =
+      input.label === undefined || input.label === null
+        ? null
+        : input.label.trim() || null;
+    try {
+      const result = db()
+        .prepare(
+          `INSERT INTO budget_month_income_boosts
+         (budget_id, month, amount, label, created_at, updated_at)
+         VALUES (@budgetId, @month, @amount, @label, @createdAt, @createdAt)`,
+        )
+        .run({
+          budgetId: input.budgetId,
+          month,
+          amount: input.amount,
+          label,
+          createdAt,
+        });
+      const id = Number(result.lastInsertRowid);
+      const row = db()
+        .prepare(
+          `SELECT id, budget_id AS budgetId, month, amount, label,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM budget_month_income_boosts WHERE id = ?`,
+        )
+        .get(id) as Record<string, unknown>;
+      return boostFromRow(row);
+    } catch (e) {
+      throw new Error(
+        `Could not save extra income: ${errorMessageFromUnknown(e)}`,
+      );
+    }
+  },
+  delete(id: number): void {
+    const result = db()
+      .prepare('DELETE FROM budget_month_income_boosts WHERE id = ?')
+      .run(id);
+    if (result.changes === 0) {
+      throw new Error('Extra income entry not found.');
+    }
   },
 };
 
@@ -367,6 +456,12 @@ function goalFromRow(row: Record<string, unknown>): Goal {
   };
 }
 
+function assertPositiveTargetAmount(amount: number, field = 'Target amount'): void {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`${field} must be a positive number.`);
+  }
+}
+
 export const GoalRepository = {
   listByProfile(profileId: number): Goal[] {
     const rows = db()
@@ -391,26 +486,44 @@ export const GoalRepository = {
     note?: string | null;
     showOnDashboard?: boolean;
   }): Goal {
+    const trimmedName = input.name?.trim() ?? '';
+    if (!trimmedName) {
+      throw new Error('Goal name is required.');
+    }
+    assertPositiveTargetAmount(input.targetAmount);
     const createdAt = now();
     const showOn = input.showOnDashboard === false ? 0 : 1;
-    const result = db()
-      .prepare(
-        `INSERT INTO goals
+    const note =
+      input.note === undefined || input.note === null
+        ? null
+        : input.note.trim() || null;
+    let id: number;
+    try {
+      const result = db()
+        .prepare(
+          `INSERT INTO goals
          (profile_id, name, target_amount, target_date, priority, note, show_on_dashboard, created_at, updated_at)
          VALUES (@profileId, @name, @targetAmount, @targetDate, @priority, @note, @showOn, @createdAt, @createdAt)`,
-      )
-      .run({
-        profileId: input.profileId,
-        name: input.name.trim(),
-        targetAmount: input.targetAmount,
-        targetDate: input.targetDate ?? null,
-        priority: input.priority ?? 0,
-        note: input.note ?? null,
-        showOn,
-        createdAt,
-      });
-    const id = Number(result.lastInsertRowid);
-    return this.listByProfile(input.profileId).find((g) => g.id === id)!;
+        )
+        .run({
+          profileId: input.profileId,
+          name: trimmedName,
+          targetAmount: input.targetAmount,
+          targetDate: input.targetDate ?? null,
+          priority: input.priority ?? 0,
+          note,
+          showOn,
+          createdAt,
+        });
+      id = Number(result.lastInsertRowid);
+    } catch (e) {
+      throw new Error(`Could not create goal: ${errorMessageFromUnknown(e)}`);
+    }
+    const row = this.listByProfile(input.profileId).find((g: Goal) => g.id === id);
+    if (!row) {
+      throw new Error('Goal was created but could not be loaded.');
+    }
+    return row;
   },
   update(input: {
     id: number;
@@ -425,25 +538,43 @@ export const GoalRepository = {
       .prepare('SELECT profile_id AS profileId FROM goals WHERE id = ?')
       .get(input.id) as { profileId: number } | undefined;
     if (!pidRow) {
-      throw new Error('Goal not found');
+      throw new Error('Goal not found.');
     }
     const current = this.listByProfile(pidRow.profileId).find(
-      (g) => g.id === input.id,
+      (g: Goal) => g.id === input.id,
     );
     if (!current) {
-      throw new Error('Goal not found');
+      throw new Error('Goal not found.');
     }
     const updatedAt = now();
-    const name = input.name !== undefined ? input.name.trim() : current.name;
+    const name =
+      input.name !== undefined ? input.name.trim() : current.name;
+    if (!name) {
+      throw new Error('Goal name cannot be empty.');
+    }
     const targetAmount =
       input.targetAmount !== undefined
         ? input.targetAmount
         : current.targetAmount;
+    if (input.targetAmount !== undefined) {
+      assertPositiveTargetAmount(targetAmount);
+    }
     const targetDate =
       input.targetDate !== undefined ? input.targetDate : current.targetDate;
     const priority =
       input.priority !== undefined ? input.priority : current.priority;
-    const note = input.note !== undefined ? input.note : current.note;
+    if (
+      input.priority !== undefined &&
+      (!Number.isFinite(priority) || priority < 1 || priority > 5)
+    ) {
+      throw new Error('Priority must be between 1 and 5.');
+    }
+    const note =
+      input.note !== undefined
+        ? input.note === null
+          ? null
+          : input.note.trim() || null
+        : current.note;
     const showOn =
       input.showOnDashboard !== undefined
         ? input.showOnDashboard
@@ -452,24 +583,34 @@ export const GoalRepository = {
         : current.showOnDashboard
           ? 1
           : 0;
-    db()
-      .prepare(
-        `UPDATE goals SET name = @name, target_amount = @targetAmount,
+    try {
+      db()
+        .prepare(
+          `UPDATE goals SET name = @name, target_amount = @targetAmount,
            target_date = @targetDate, priority = @priority, note = @note,
            show_on_dashboard = @showOn, updated_at = @updatedAt
          WHERE id = @id`,
-      )
-      .run({
-        id: input.id,
-        name,
-        targetAmount,
-        targetDate,
-        priority,
-        note,
-        showOn,
-        updatedAt,
-      });
-    return this.listByProfile(pidRow.profileId).find((g) => g.id === input.id)!;
+        )
+        .run({
+          id: input.id,
+          name,
+          targetAmount,
+          targetDate,
+          priority,
+          note,
+          showOn,
+          updatedAt,
+        });
+    } catch (e) {
+      throw new Error(`Could not update goal: ${errorMessageFromUnknown(e)}`);
+    }
+    const next = this.listByProfile(pidRow.profileId).find(
+      (g: Goal) => g.id === input.id,
+    );
+    if (!next) {
+      throw new Error('Goal was updated but could not be reloaded.');
+    }
+    return next;
   },
 };
 

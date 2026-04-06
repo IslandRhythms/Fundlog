@@ -440,7 +440,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
     aria-labelledby="addCardModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="addCardModalLabel" class="modal-title">Add card</h5>
@@ -530,7 +530,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
     aria-labelledby="editCardModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="editCardModalLabel" class="modal-title">Edit card</h5>
@@ -579,7 +579,7 @@ async function setActivePerk(cardId: number, perkId: number | null) {
     aria-labelledby="addPerkModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 id="addPerkModalLabel" class="modal-title">

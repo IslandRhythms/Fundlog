@@ -625,6 +625,65 @@ html {
   color: #9ca3af;
 }
 
+/*
+ * Scrollable modals on small / short windows (Electron, laptop splits):
+ * - Cap dialog to the dynamic viewport so content cannot grow past the screen.
+ * - Use min-height: 0 on flex children so .modal-body can shrink and scroll.
+ * - When <form> wraps .modal-body + .modal-footer, make the form a flex column
+ *   (Bootstrap expects body as a direct flex child of .modal-content).
+ */
+.modal-dialog.modal-dialog-scrollable {
+  max-height: calc(100vh - 2 * var(--bs-modal-margin, 0.5rem));
+  max-height: calc(100dvh - 2 * var(--bs-modal-margin, 0.5rem));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.modal-dialog.modal-dialog-scrollable .modal-content {
+  max-height: 100%;
+  min-height: 0;
+}
+
+.modal-dialog-scrollable .modal-content > .modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-dialog-scrollable .modal-content > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.modal-dialog-scrollable .modal-content > form .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-dialog-scrollable .modal-content > form .modal-footer {
+  flex-shrink: 0;
+}
+
+@media (max-height: 740px) {
+  .modal-dialog.modal-dialog-centered.modal-dialog-scrollable {
+    align-items: flex-start;
+    margin-top: var(--bs-modal-margin, 0.5rem);
+    margin-bottom: var(--bs-modal-margin, 0.5rem);
+  }
+}
+
+.modal.show {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .stacked-section + .stacked-section {
   margin-top: 16px;
 }
@@ -653,6 +712,81 @@ html {
   border-radius: var(--radius-md);
   background: transparent;
   box-shadow: none;
+}
+
+.goals-budget-fuel-card {
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--card-bg) 94%, var(--accent-bg));
+}
+
+.goals-budget-fuel-title {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.goals-fuel-ring {
+  --goals-ring-pct: 0%;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  padding: 10px;
+  background: conic-gradient(
+    color-mix(in srgb, var(--accent) 88%, var(--card-bg)) 0 var(--goals-ring-pct),
+    color-mix(in srgb, var(--border) 82%, var(--card-bg)) 0
+  );
+  box-sizing: border-box;
+}
+
+.goals-fuel-ring--over {
+  background: conic-gradient(
+    color-mix(in srgb, #dc3545 82%, var(--card-bg)) 0 var(--goals-ring-pct),
+    color-mix(in srgb, var(--border) 82%, var(--card-bg)) 0
+  );
+  box-shadow: 0 0 0 3px color-mix(in srgb, #dc3545 35%, transparent);
+}
+
+.goals-fuel-ring__hole {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.35rem 0.5rem;
+  box-sizing: border-box;
+}
+
+.goals-fuel-ring__label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  line-height: 1.2;
+  margin-bottom: 0.2rem;
+}
+
+.goals-fuel-ring__value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.goals-fuel-stats dt {
+  font-size: 0.75rem;
+}
+
+.goals-fuel-stats dd {
+  font-size: 0.95rem;
+  color: var(--card-text);
+}
+
+.goals-goal-progress__bar .progress-bar {
+  background-color: var(--accent);
 }
 
 .goals-explainer-title {

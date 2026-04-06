@@ -54,6 +54,16 @@ interface Window {
         ruleSet: string;
       }): Promise<import('./shared/types').Budget>;
     };
+    budgetIncomeBoost: {
+      listByProfile(profileId: number): Promise<import('./shared/types').BudgetMonthIncomeBoost[]>;
+      create(input: {
+        budgetId: number;
+        month: string;
+        amount: number;
+        label?: string | null;
+      }): Promise<import('./shared/types').BudgetMonthIncomeBoost>;
+      delete(id: number): Promise<void>;
+    };
     category: {
       listByBudget(budgetId: number): Promise<{
         categories: import('./shared/types').BudgetCategory[];

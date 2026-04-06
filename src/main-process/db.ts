@@ -4,7 +4,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 let db: Database.Database | null = null;
 
@@ -285,6 +285,29 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
       )
       .run(4, now);
+  }
+
+  if (current < 5 && SCHEMA_VERSION >= 5) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      CREATE TABLE budget_month_income_boosts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        budget_id INTEGER NOT NULL,
+        month TEXT NOT NULL,
+        amount REAL NOT NULL,
+        label TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_budget_month_income_boosts_budget_month
+        ON budget_month_income_boosts(budget_id, month);
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(5, now);
   }
 }
 

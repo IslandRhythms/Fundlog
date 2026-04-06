@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
+import { calendarMonthNow } from '../shared/calendarMonth';
 import type { BudgetCategory, BudgetSubcategory, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
@@ -70,7 +72,17 @@ const mostCommonCategory = computed(() => {
 
 const recentUnexpected = computed(() => unexpected.value.slice(0, 10));
 
-const budgetIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
+const baseBudgetIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
+
+const budgetIncome = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return 0;
+  return domain.effectiveMonthlyIncomeFor(b.id, calendarMonthNow());
+});
+
+const monthIncomeBoost = computed(() =>
+  Math.max(0, budgetIncome.value - baseBudgetIncome.value),
+);
 
 const unexpectedPercent = computed(() => {
   if (!budgetIncome.value || !totalUnexpected.value) return 0;
@@ -140,7 +152,14 @@ async function addUnexpected() {
   <div class="view container-fluid">
     <h2 class="mb-2">Expenses</h2>
     <p class="view-subtitle mb-4">
-      Track unexpected expenses and see which categories they impact most.
+      Track unexpected expenses and see which categories they impact most. Summary percentages use
+      your active budget’s effective income for
+      <strong>this calendar month</strong> (see
+      <RouterLink to="/extra-income">Extra income</RouterLink>
+      for one-off bumps).
+    </p>
+    <p v-if="activeBudget && monthIncomeBoost > 0" class="small text-muted mb-3">
+      This month includes {{ monthIncomeBoost.toLocaleString() }} extra on top of the budget base.
     </p>
 
     <p v-if="!activeBudget" class="status-text">
@@ -238,7 +257,7 @@ async function addUnexpected() {
     aria-labelledby="addUnexpectedModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="addUnexpectedModalLabel">Add unexpected expense</h5>

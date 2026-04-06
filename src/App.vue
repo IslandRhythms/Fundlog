@@ -26,6 +26,7 @@ const navSections: NavSection[] = [
     items: [
       { path: '/goals', label: 'Goals' },
       { path: '/expenses', label: 'Expenses' },
+      { path: '/extra-income', label: 'Extra income' },
     ],
   },
   { heading: 'Credit', items: [{ path: '/cards', label: 'Cards' }] },

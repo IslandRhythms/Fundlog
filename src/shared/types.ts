@@ -22,6 +22,17 @@ export interface Budget {
   updatedAt: string;
 }
 
+/** One-time extra income for a specific budget + calendar month (e.g. extra shift). */
+export interface BudgetMonthIncomeBoost {
+  id: number;
+  budgetId: number;
+  month: string; // YYYY-MM
+  amount: number;
+  label: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BudgetCategory {
   id: number;
   budgetId: number;

@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
-import type { Goal, Profile } from '../shared/types';
+import { computePlannedExpenseBarSegments } from '../shared/plannedExpenseBar';
+import { calendarMonthNow } from '../shared/calendarMonth';
+import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
+import LoadingView from '../components/LoadingView.vue';
+import type {
+  BudgetCategory,
+  BudgetSubcategory,
+  Goal,
+  Profile,
+  Transaction,
+} from '../shared/types';
 
 const domain = useDomainStore();
 
@@ -15,6 +25,20 @@ const note = ref('');
 const formError = ref<string | null>(null);
 const showOnDashboardNew = ref(true);
 
+const editingGoalId = ref<number | null>(null);
+const editName = ref('');
+const editTargetAmount = ref<number | null>(null);
+const editTargetDate = ref('');
+const editPriority = ref(3);
+const editNote = ref('');
+const editShowOnDashboard = ref(true);
+const editFormError = ref<string | null>(null);
+
+const categories = ref<BudgetCategory[]>([]);
+const subcategories = ref<BudgetSubcategory[]>([]);
+const unexpectedTxs = ref<Transaction[]>([]);
+const loadingBudget = ref(false);
+
 const priorityOptions: { value: number; label: string }[] = [
   { value: 5, label: '5 — Highest (break ties on Dashboard)' },
   { value: 4, label: '4 — High' },
@@ -23,10 +47,54 @@ const priorityOptions: { value: number; label: string }[] = [
   { value: 1, label: '1 — Lowest' },
 ];
 
+const activeBudget = computed(() => domain.activeBudget);
+
+const groupedSubcategories = computed(() => {
+  const grouped: Record<number, BudgetSubcategory[]> = {};
+  for (const sub of subcategories.value) {
+    const parentId = sub.parentCategoryId ?? 0;
+    if (!grouped[parentId]) grouped[parentId] = [];
+    grouped[parentId].push(sub);
+  }
+  return grouped;
+});
+
+async function loadBudgetDetails() {
+  if (!activeBudget.value || !domain.activeProfileId) {
+    categories.value = [];
+    subcategories.value = [];
+    unexpectedTxs.value = [];
+    return;
+  }
+  loadingBudget.value = true;
+  try {
+    const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
+    categories.value = result.categories;
+    subcategories.value = result.subcategories;
+    unexpectedTxs.value = await window.fundlog.transaction.listUnexpected(
+      domain.activeProfileId,
+      activeBudget.value.id,
+    );
+  } finally {
+    loadingBudget.value = false;
+  }
+}
+
 onMounted(async () => {
   await domain.loadProfiles();
+  await domain.loadBudgets();
+  await domain.loadTransactions();
   await domain.loadGoals();
+  await loadBudgetDetails();
 });
+
+watch(
+  () => domain.activeBudgetId,
+  async () => {
+    await domain.loadTransactions();
+    await loadBudgetDetails();
+  },
+);
 
 const activeProfile = computed<Profile | null>(() => {
   const id = domain.activeProfileId;
@@ -45,6 +113,44 @@ const dashboardEligibleCount = computed(
   () => goals.value.filter((g) => g.showOnDashboard).length,
 );
 
+const baseMonthlyIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
+
+const monthlyIncome = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return 0;
+  return domain.effectiveMonthlyIncomeFor(b.id, calendarMonthNow());
+});
+
+const monthIncomeBoost = computed(() =>
+  Math.max(0, monthlyIncome.value - baseMonthlyIncome.value),
+);
+
+const plannedBarResult = computed(() =>
+  computePlannedExpenseBarSegments(
+    categories.value,
+    groupedSubcategories.value,
+    subcategories.value,
+    unexpectedTxs.value,
+    monthlyIncome.value,
+  ),
+);
+
+const committedTotal = computed(
+  () => plannedBarResult.value.totalPlanned + plannedBarResult.value.totalUnexpected,
+);
+
+const remainingHeadroom = computed(() => monthlyIncome.value - committedTotal.value);
+
+const fuelRingUsedPct = computed(() => {
+  const inc = monthlyIncome.value;
+  if (!inc || inc <= 0) return 0;
+  return Math.min(100, (committedTotal.value / inc) * 100);
+});
+
+const isOverCommitted = computed(
+  () => monthlyIncome.value > 0 && committedTotal.value > monthlyIncome.value,
+);
+
 function formatMoney(amount: number, currencyCode: string) {
   const code = currencyCode?.trim() || 'USD';
   try {
@@ -53,6 +159,66 @@ function formatMoney(amount: number, currencyCode: string) {
     return `${amount.toLocaleString()} ${code}`;
   }
 }
+
+function currencyCode() {
+  return activeProfile.value?.currencyCode?.trim() || 'USD';
+}
+
+function savedTowardGoal(goalId: number): number {
+  return domain.transactions
+    .filter((t) => t.goalId === goalId)
+    .reduce((sum, t) => sum + t.amount, 0);
+}
+
+/** Whole months from now until the target month (at least 1). */
+function monthsRemainingToDate(iso: string): number | null {
+  const end = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(end.getTime())) return null;
+  const now = new Date();
+  if (end <= now) return 1;
+  let months =
+    (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth());
+  if (end.getDate() < now.getDate()) months -= 1;
+  return Math.max(1, months);
+}
+
+type GoalPace = {
+  saved: number;
+  progressPct: number;
+  monthsLeft: number | null;
+  neededPerMonth: number | null;
+  remainingToFund: number;
+};
+
+function paceForGoal(g: Goal): GoalPace {
+  const saved = savedTowardGoal(g.id);
+  const remainingToFund = Math.max(0, g.targetAmount - saved);
+  const progressPct = g.targetAmount > 0 ? Math.min(100, (saved / g.targetAmount) * 100) : 0;
+  if (!g.targetDate) {
+    return { saved, progressPct, monthsLeft: null, neededPerMonth: null, remainingToFund };
+  }
+  const monthsLeft = monthsRemainingToDate(g.targetDate);
+  if (monthsLeft == null) {
+    return { saved, progressPct, monthsLeft: null, neededPerMonth: null, remainingToFund };
+  }
+  const neededPerMonth = remainingToFund / monthsLeft;
+  return { saved, progressPct, monthsLeft, neededPerMonth, remainingToFund };
+}
+
+function paceStatusClass(pace: GoalPace): string {
+  if (pace.neededPerMonth == null || pace.monthsLeft == null) return 'text-muted';
+  if (pace.remainingToFund <= 0) return 'text-success';
+  if (remainingHeadroom.value >= pace.neededPerMonth) return 'text-success';
+  if (remainingHeadroom.value >= 0) return 'text-warning';
+  return 'text-danger';
+}
+
+const goalRows = computed(() =>
+  goals.value.map((goal) => ({
+    goal,
+    pace: paceForGoal(goal),
+  })),
+);
 
 function formatTargetDate(iso: string | null) {
   if (!iso) return null;
@@ -77,6 +243,58 @@ function resetGoalForm() {
 
 function openCreateGoalModal() {
   resetGoalForm();
+}
+
+function goalDateInputValue(iso: string | null): string {
+  if (!iso) return '';
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso.trim());
+  return m ? m[1] : iso.slice(0, 10);
+}
+
+function openEditGoalModal(g: Goal) {
+  editingGoalId.value = g.id;
+  editName.value = g.name;
+  editTargetAmount.value = g.targetAmount;
+  editTargetDate.value = goalDateInputValue(g.targetDate);
+  editPriority.value = g.priority;
+  editNote.value = g.note ?? '';
+  editShowOnDashboard.value = g.showOnDashboard;
+  editFormError.value = null;
+}
+
+function onEditGoalModalHidden() {
+  editingGoalId.value = null;
+  editFormError.value = null;
+}
+
+async function submitEdit() {
+  editFormError.value = null;
+  const id = editingGoalId.value;
+  if (id == null) return;
+  if (!editName.value?.trim()) {
+    editFormError.value = 'Enter a short name for this goal.';
+    return;
+  }
+  if (
+    editTargetAmount.value == null ||
+    editTargetAmount.value <= 0 ||
+    !Number.isFinite(editTargetAmount.value)
+  ) {
+    editFormError.value = 'Enter a positive target amount.';
+    return;
+  }
+  const ok = await domain.updateGoal({
+    id,
+    name: editName.value.trim(),
+    targetAmount: editTargetAmount.value,
+    targetDate: editTargetDate.value.trim() || null,
+    priority: editPriority.value,
+    note: editNote.value.trim() || null,
+    showOnDashboard: editShowOnDashboard.value,
+  });
+  if (!ok) return;
+  hideBsModal('editGoalModal');
+  editingGoalId.value = null;
 }
 
 async function submit() {
@@ -131,9 +349,9 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
   <div class="view goals-view container-fluid">
     <h2 class="mb-2">Goals</h2>
     <p class="view-subtitle mb-3">
-      Set savings or debt targets for your <strong>active profile</strong>. They appear on the
-      <RouterLink to="/dashboard">Dashboard</RouterLink>
-      so your top priorities stay visible while you budget day to day.
+      Goals use the same idea as a calorie budget: monthly income is your allowance, planned lines and
+      expenses on the active budget are what you have already “spent,” and what is left is how much
+      room you have to push your goals forward this month.
     </p>
 
     <p v-if="!domain.activeProfileId" class="status-text mb-4">
@@ -145,28 +363,134 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
     <template v-else>
       <section class="goals-explainer card border shadow-none mb-4">
         <div class="card-body py-3">
-          <h3 class="h6 goals-explainer-title mb-2">How goals work in Fundlog</h3>
+          <h3 class="h6 goals-explainer-title mb-2">How this ties to your budget</h3>
           <ul class="goals-explainer-list mb-0 small">
             <li>
-              <strong>Targets only</strong> — you define a name, amount, optional deadline, and how
-              important it is (priority). Fundlog does not move money; it keeps the target in
-              sight next to your budget.
+              <strong>Income</strong> — your
+              <RouterLink to="/budgets">active budget</RouterLink>
+              base amount plus any
+              <RouterLink to="/extra-income">Extra income</RouterLink>
+              lines for <strong>this calendar month</strong>. Changing either updates the ring.
             </li>
             <li>
-              <strong>Dashboard</strong> — toggle <strong>Show on dashboard</strong> below for up
-              to three slots (among those enabled, highest priority appears first). Reprioritize with
-              the priority menu on each goal.
+              <strong>Committed</strong> — planned subcategories plus unexpected expenses from
+              <RouterLink to="/expenses">Expenses</RouterLink>. Adding lines or spending here uses
+              up headroom, like logging meals in a calorie app.
             </li>
             <li>
-              <strong>Budgets</strong> — keep using
-              <RouterLink to="/budgets">Budgets</RouterLink>
-              and
-              <RouterLink to="/expenses">Expenses</RouterLink>
-              for monthly plans; goals are the longer-term “why” behind them.
+              <strong>Goals below</strong> — progress uses amounts recorded on transactions linked to
+              each goal (when your flows set that). The pace line compares your deadline to this
+              month’s headroom so you see if the budget has room to hit the target.
             </li>
           </ul>
         </div>
       </section>
+
+      <section
+        v-if="activeBudget"
+        class="card border shadow-none mb-4 goals-budget-fuel-card"
+      >
+        <div class="card-body py-3 py-md-4">
+          <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <h3 class="h5 mb-1 goals-budget-fuel-title">Monthly budget fuel</h3>
+              <p class="small text-muted mb-0">
+                <strong>{{ activeBudget.name }}</strong>
+                <span class="text-body-secondary"> · income vs. what your plan already commits</span>
+              </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2 flex-shrink-0">
+              <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+                Extra income
+              </RouterLink>
+              <RouterLink to="/budgets" class="btn btn-sm btn-outline-primary">
+                Edit budget
+              </RouterLink>
+            </div>
+          </div>
+
+          <LoadingView v-if="loadingBudget" message="Loading budget…" />
+          <template v-else>
+            <div v-if="!monthlyIncome" class="small text-muted mb-0">
+              Set a positive monthly income on this budget to see headroom and the ring.
+            </div>
+            <div v-else class="row g-4 align-items-center">
+              <div class="col-auto mx-auto mx-md-0">
+                <div
+                  class="goals-fuel-ring"
+                  :class="{ 'goals-fuel-ring--over': isOverCommitted }"
+                  :style="{ '--goals-ring-pct': fuelRingUsedPct + '%' }"
+                  role="img"
+                  :aria-label="`Committed ${fuelRingUsedPct.toFixed(0)} percent of monthly income`"
+                >
+                  <div class="goals-fuel-ring__hole">
+                    <span class="goals-fuel-ring__label">Left this month</span>
+                    <span
+                      class="goals-fuel-ring__value"
+                      :class="{
+                        'text-success': remainingHeadroom > 0,
+                        'text-danger': remainingHeadroom < 0,
+                        'text-body-secondary': remainingHeadroom === 0,
+                      }"
+                    >
+                      {{ formatMoney(remainingHeadroom, currencyCode()) }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div class="col">
+                <dl class="row goals-fuel-stats small mb-2 mb-md-3">
+                  <div class="col-sm-4">
+                    <dt class="text-muted fw-normal mb-0">Income (this month)</dt>
+                    <dd class="mb-0 fw-semibold">
+                      {{ formatMoney(monthlyIncome, currencyCode()) }}
+                    </dd>
+                  </div>
+                  <div class="col-sm-4">
+                    <dt class="text-muted fw-normal mb-0">Committed</dt>
+                    <dd class="mb-0 fw-semibold">
+                      {{ formatMoney(committedTotal, currencyCode()) }}
+                    </dd>
+                  </div>
+                  <div class="col-sm-4">
+                    <dt class="text-muted fw-normal mb-0">Headroom</dt>
+                    <dd
+                      class="mb-0 fw-semibold"
+                      :class="{
+                        'text-success': remainingHeadroom > 0,
+                        'text-danger': remainingHeadroom < 0,
+                      }"
+                    >
+                      {{ formatMoney(remainingHeadroom, currencyCode()) }}
+                    </dd>
+                  </div>
+                </dl>
+                <p v-if="monthIncomeBoost > 0" class="small text-muted mb-2">
+                  Includes {{ formatMoney(monthIncomeBoost, currencyCode()) }} from
+                  <RouterLink to="/extra-income">Extra income</RouterLink>
+                  · base budget {{ formatMoney(baseMonthlyIncome, currencyCode()) }}
+                </p>
+                <p v-if="isOverCommitted" class="small text-danger mb-2">
+                  You are committed above income this month. Goals have no positive headroom until you
+                  trim the plan, raise income, or move spending.
+                </p>
+                <PlannedExpenseCategoryBar
+                  :category-parts="plannedBarResult.categoryParts"
+                  :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
+                  empty-hint="Add planned line items on Budgets or log expenses to see the split."
+                  aria-label="Committed spending by category as a share of income"
+                />
+              </div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <p v-else class="status-text mb-4">
+        Create a budget in
+        <RouterLink to="/budgets">Budgets</RouterLink>
+        to see monthly headroom next to your goals. You can still add goals below.
+      </p>
 
       <div class="row g-3">
         <div class="col-12">
@@ -216,7 +540,7 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                 class="list-group list-group-flush rounded-3 border border-secondary-subtle goals-dashboard-list"
               >
                 <li
-                  v-for="g in goals"
+                  v-for="{ goal: g, pace } in goalRows"
                   :key="g.id"
                   class="list-group-item border-secondary-subtle px-3 px-md-4 py-4 bg-transparent"
                 >
@@ -233,16 +557,82 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                       <div class="small text-muted mb-2">
                         Target
                         <strong class="text-body">{{
-                          formatMoney(g.targetAmount, activeProfile?.currencyCode ?? 'USD')
+                          formatMoney(g.targetAmount, currencyCode())
                         }}</strong>
                         <template v-if="formatTargetDate(g.targetDate)">
                           · by {{ formatTargetDate(g.targetDate) }}
                         </template>
                       </div>
-                      <p v-if="g.note" class="small text-body-secondary mb-0">{{ g.note }}</p>
+                      <div class="goals-goal-progress mt-2">
+                        <div class="d-flex flex-wrap justify-content-between gap-1 small mb-1">
+                          <span class="text-muted">Saved toward target</span>
+                          <span class="text-body-secondary">
+                            {{ formatMoney(pace.saved, currencyCode()) }}
+                            ·
+                            {{ pace.progressPct.toFixed(0) }}%
+                          </span>
+                        </div>
+                        <div class="progress goals-goal-progress__bar" style="height: 6px">
+                          <div
+                            class="progress-bar"
+                            role="progressbar"
+                            :style="{
+                              width: Math.min(100, pace.progressPct) + '%',
+                            }"
+                            :aria-valuenow="Math.round(Math.min(100, pace.progressPct))"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                          />
+                        </div>
+                        <p
+                          v-if="pace.neededPerMonth != null && pace.monthsLeft != null"
+                          class="small mb-0 mt-2 goals-goal-pace"
+                          :class="paceStatusClass(pace)"
+                        >
+                          To finish on time you need about
+                          <strong>{{ formatMoney(pace.neededPerMonth, currencyCode()) }}</strong>
+                          /mo over the next
+                          {{ pace.monthsLeft }}
+                          {{ pace.monthsLeft === 1 ? 'month' : 'months' }}. This month’s headroom is
+                          <strong>{{ formatMoney(remainingHeadroom, currencyCode()) }}</strong>.
+                          <template v-if="pace.remainingToFund <= 0">
+                            Target balance reached on paper—nice work.
+                          </template>
+                          <template
+                            v-else-if="monthlyIncome > 0 && remainingHeadroom >= pace.neededPerMonth"
+                          >
+                            Your budget has enough slack to cover that pace if you send it here.
+                          </template>
+                          <template v-else-if="monthlyIncome > 0 && remainingHeadroom >= 0">
+                            Headroom is below that pace—you may need to trim the plan or extend the
+                            timeline.
+                          </template>
+                          <template v-else-if="monthlyIncome > 0">
+                            No headroom while you are over-committed; loosen the budget to make
+                            progress.
+                          </template>
+                        </p>
+                        <p
+                          v-else-if="pace.remainingToFund > 0"
+                          class="small text-muted mb-0 mt-2 goals-goal-pace"
+                        >
+                          No target date on this goal, so monthly pace vs. headroom is not estimated.
+                        </p>
+                      </div>
+                      <p v-if="g.note" class="small text-body-secondary mb-0 mt-2">{{ g.note }}</p>
                     </div>
                     <div class="col-lg-auto">
                       <div class="d-flex flex-column gap-3 align-items-stretch align-items-lg-end">
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary btn-sm align-self-stretch align-self-lg-end"
+                          style="max-width: 15rem"
+                          data-bs-toggle="modal"
+                          data-bs-target="#editGoalModal"
+                          @click="openEditGoalModal(g)"
+                        >
+                          Edit goal
+                        </button>
                         <div class="form-check form-switch mb-0">
                           <input
                             :id="'goal-dash-' + g.id"
@@ -287,7 +677,7 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
     aria-labelledby="createGoalModalLabel"
     aria-hidden="true"
   >
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
           <div>
@@ -384,6 +774,116 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
             <button type="submit" class="btn btn-success">Save goal</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="modal fade"
+    id="editGoalModal"
+    tabindex="-1"
+    aria-labelledby="editGoalModalLabel"
+    aria-hidden="true"
+    @hidden.bs.modal="onEditGoalModalHidden"
+  >
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title" id="editGoalModalLabel">Edit goal</h5>
+            <p class="goals-modal-lead small text-muted mb-0">
+              Profile <strong>{{ activeProfile?.name ?? '…' }}</strong>
+            </p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form @submit.prevent="submitEdit">
+          <div class="modal-body">
+            <p class="goals-modal-intro small">
+              Update the target, deadline, or priority. Clear the date field to remove a deadline—pace
+              hints then hide until you set a date again.
+            </p>
+
+            <div
+              v-if="editFormError"
+              class="rounded border border-danger border-opacity-25 px-3 py-2 small mb-3 text-danger"
+              role="alert"
+            >
+              {{ editFormError }}
+            </div>
+
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label" for="edit-goal-name">Goal name</label>
+                <input
+                  id="edit-goal-name"
+                  v-model="editName"
+                  type="text"
+                  class="form-control"
+                  placeholder="e.g. Emergency fund, Pay off card, Vacation"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="edit-goal-amount">Target amount</label>
+                <div class="input-group">
+                  <span class="input-group-text">{{
+                    activeProfile?.currencyCode?.trim() || 'USD'
+                  }}</span>
+                  <input
+                    id="edit-goal-amount"
+                    v-model.number="editTargetAmount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    class="form-control"
+                    placeholder="5000"
+                  />
+                </div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="edit-goal-date">Target date (optional)</label>
+                <input id="edit-goal-date" v-model="editTargetDate" type="date" class="form-control" />
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="edit-goal-priority">Priority</label>
+                <select id="edit-goal-priority" v-model.number="editPriority" class="form-select">
+                  <option v-for="opt in priorityOptions" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="edit-goal-note">Note (optional)</label>
+                <textarea
+                  id="edit-goal-note"
+                  v-model="editNote"
+                  rows="3"
+                  class="form-control"
+                  placeholder="Why this matters, milestones, or reminders—only you see this."
+                ></textarea>
+              </div>
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input
+                    id="edit-goal-show-dashboard"
+                    v-model="editShowOnDashboard"
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                  />
+                  <label class="form-check-label" for="edit-goal-show-dashboard">
+                    Show on Dashboard (competes for up to three spots by priority)
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save changes</button>
           </div>
         </form>
       </div>
