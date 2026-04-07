@@ -8,9 +8,30 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
+/**
+ * Forge Vite’s default ignore only ships `/.vite`, so `require('better-sqlite3')` in the
+ * main bundle has no module to load. Include that package and its runtime deps (not
+ * prebuild-install — install-time only).
+ *
+ * If `packagerConfig.ignore` is set, the Vite plugin leaves it alone — see plugin-vite
+ * `resolveForgeConfig`.
+ */
+function packagerIgnore(file: string): boolean {
+  if (!file) return false;
+  if (file.startsWith('/.vite')) return false;
+  // Must not ignore the `node_modules` root; otherwise the walker never reaches packages below.
+  if (file === '/node_modules') return false;
+  if (file.startsWith('/node_modules/better-sqlite3')) return false;
+  if (file.startsWith('/node_modules/bindings')) return false;
+  if (file.startsWith('/node_modules/file-uri-to-path')) return false;
+  // Skip the rest of node_modules and all other project files (same idea as Forge Vite default).
+  return true;
+}
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    ignore: packagerIgnore,
   },
   rebuildConfig: {},
   makers: [
