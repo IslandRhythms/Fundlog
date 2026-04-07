@@ -254,6 +254,22 @@ export const useDomainStore = defineStore('domain', {
         return false;
       }
     },
+    async deleteGoal(id: number): Promise<boolean> {
+      if (!this.activeProfileId) return false;
+      const { useToast } = await import('vue-toastification');
+      const toast = useToast();
+      try {
+        await window.fundlog.goal.delete({ id, profileId: this.activeProfileId });
+        this.goals = this.goals.filter((g: Goal) => g.id !== id);
+        await this.loadTransactions();
+        toast.success('Goal deleted.');
+        return true;
+      } catch (err) {
+        console.error(err);
+        toast.error(errorMessageFromUnknown(err, 'Failed to delete goal.'));
+        return false;
+      }
+    },
   },
 });
 

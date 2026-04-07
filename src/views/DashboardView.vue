@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useDomainStore } from '../stores/domain';
 import CategoryPieChart from '../components/CategoryPieChart.vue';
 import LoadingView from '../components/LoadingView.vue';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import { computePlannedExpenseBarSegments } from '../shared/plannedExpenseBar';
+import {
+  goalProgressPctWithBudget,
+  monthlyPlanTowardGoal,
+} from '../shared/goalBudgetProgress';
 import { calendarMonthNow } from '../shared/calendarMonth';
 import type {
   BudgetCategory,
   BudgetSubcategory,
+  Goal,
+  GoalAllocation,
   Profile,
   Transaction,
 } from '../shared/types';
@@ -25,6 +31,8 @@ const activeProfile = computed<Profile | null>(() => {
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
+const goalContributionTxs = ref<Transaction[]>([]);
+const goalAllocations = ref<GoalAllocation[]>([]);
 const loading = ref(false);
 
 const activeBudget = computed(() => domain.activeBudget);
@@ -48,13 +56,34 @@ async function loadCategories() {
     const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = result.categories;
     subcategories.value = result.subcategories;
-    const unexpected = await window.fundlog.transaction.listUnexpected(
-      domain.activeProfileId,
-      activeBudget.value.id,
-    );
+    const [unexpected, goalContrib] = await Promise.all([
+      window.fundlog.transaction.listUnexpected(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+      window.fundlog.transaction.listGoalContributions(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+    ]);
     unexpectedTxs.value = unexpected;
+    goalContributionTxs.value = goalContrib;
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadGoalAllocations() {
+  if (!domain.activeProfileId) {
+    goalAllocations.value = [];
+    return;
+  }
+  try {
+    goalAllocations.value = await window.fundlog.goalAllocation.listByProfile(
+      domain.activeProfileId,
+    );
+  } catch {
+    goalAllocations.value = [];
   }
 }
 
@@ -64,7 +93,24 @@ onMounted(async () => {
   await domain.loadGoals();
   await domain.loadTransactions();
   await loadCategories();
+  await loadGoalAllocations();
 });
+
+watch(
+  () => domain.activeBudgetId,
+  async () => {
+    await loadCategories();
+    await loadGoalAllocations();
+  },
+);
+
+watch(
+  () => domain.activeProfileId,
+  async () => {
+    await loadCategories();
+    await loadGoalAllocations();
+  },
+);
 
 const splitCategories = computed(() => categories.value);
 
@@ -86,6 +132,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
+    goalContributionTxs.value,
     monthlyIncome.value,
   ),
 );
@@ -121,6 +168,51 @@ function formatGoalDate(iso: string | null) {
   const d = new Date(`${iso}T12:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function savedTowardGoal(goalId: number): number {
+  return transactions.value
+    .filter((t) => t.goalId === goalId)
+    .reduce((sum, t) => sum + t.amount, 0);
+}
+
+function goalProgressPctRecorded(g: Goal): number {
+  if (g.targetAmount <= 0) return 0;
+  return Math.min(100, (savedTowardGoal(g.id) / g.targetAmount) * 100);
+}
+
+/** Bar width: recorded savings plus this month’s linked plan slice (capped to remaining gap). */
+function goalProgressPctForBar(g: Goal): number {
+  return goalProgressPctWithBudget(
+    g,
+    savedTowardGoal(g.id),
+    goalAllocations.value,
+    subcategories.value,
+  );
+}
+
+function goalPlanThisMonthOnDashboard(g: Goal): number {
+  return monthlyPlanTowardGoal(g.id, goalAllocations.value, subcategories.value);
+}
+
+/** Saved amount meets or exceeds target (green styling only in this case). */
+function goalSavingMatchedTarget(g: Goal): boolean {
+  if (g.targetAmount <= 0) return false;
+  return savedTowardGoal(g.id) + 1e-9 >= g.targetAmount;
+}
+
+function activityKindLabel(tx: Transaction): string {
+  if (tx.goalId != null) return 'Goal saving';
+  if (tx.source === 'csv') return 'Imported expense';
+  if (tx.source === 'ocr') return 'Receipt expense';
+  if (tx.source === 'manual' && tx.subcategoryId != null) return 'Unexpected expense';
+  return 'Manual entry';
+}
+
+function activityKindDetail(tx: Transaction): string | null {
+  if (tx.goalId == null) return null;
+  const name = goals.value.find((x) => x.id === tx.goalId)?.name?.trim();
+  return name || null;
 }
 </script>
 
@@ -162,11 +254,13 @@ function formatGoalDate(iso: string | null) {
 
                 <div class="mb-3">
                   <div class="d-flex flex-wrap justify-content-between gap-2 small mb-1">
-                    <span>Planned + unexpected</span>
+                    <span>Planned + unexpected + goal savings</span>
                     <span>
                       {{
                         (
-                          plannedBarResult.totalPlanned + plannedBarResult.totalUnexpected
+                          plannedBarResult.totalPlanned +
+                          plannedBarResult.totalUnexpected +
+                          plannedBarResult.totalGoalSavings
                         ).toLocaleString()
                       }}
                       ({{ totalPercent.toFixed(1) }}% of income)
@@ -175,7 +269,7 @@ function formatGoalDate(iso: string | null) {
                   <PlannedExpenseCategoryBar
                     :category-parts="plannedBarResult.categoryParts"
                     :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-                    empty-hint="Add planned line items or unexpected expenses to see your budget mix here."
+                    empty-hint="Add planned lines, unexpected expenses, or goal savings to see your budget mix here."
                   />
                 </div>
 
@@ -269,8 +363,45 @@ function formatGoalDate(iso: string | null) {
                     P{{ g.priority }}
                   </span>
                 </div>
-                <div class="dashboard-goal-tile__amount">
-                  {{ formatGoalMoney(g.targetAmount) }}
+                <div class="dashboard-goal-tile__amount-row">
+                  <span
+                    class="dashboard-goal-tile__saved"
+                    :class="{ 'dashboard-goal-tile__saved--matched': goalSavingMatchedTarget(g) }"
+                  >
+                    {{ formatGoalMoney(savedTowardGoal(g.id)) }}
+                  </span>
+                  <span class="dashboard-goal-tile__target-sep text-muted">/</span>
+                  <span class="dashboard-goal-tile__target">{{
+                    formatGoalMoney(g.targetAmount)
+                  }}</span>
+                </div>
+                <div class="dashboard-goal-tile__progress mt-2">
+                  <div class="progress dashboard-goal-tile__progress-bar" style="height: 5px">
+                    <div
+                      class="progress-bar"
+                      :class="goalSavingMatchedTarget(g) ? 'bg-success' : 'bg-primary'"
+                      role="progressbar"
+                      :style="{ width: goalProgressPctForBar(g) + '%' }"
+                      :aria-valuenow="Math.round(goalProgressPctForBar(g))"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                    />
+                  </div>
+                  <div
+                    class="dashboard-goal-tile__pct small mt-1"
+                    :class="goalSavingMatchedTarget(g) ? 'text-success' : 'text-muted'"
+                  >
+                    {{ goalProgressPctForBar(g).toFixed(0) }}% toward target
+                    <span
+                      v-if="
+                        goalPlanThisMonthOnDashboard(g) > 0 &&
+                        savedTowardGoal(g.id) + 1e-9 < g.targetAmount
+                      "
+                      class="d-block text-muted"
+                    >
+                      {{ goalProgressPctRecorded(g).toFixed(0) }}% recorded; bar includes linked plan
+                    </span>
+                  </div>
                 </div>
                 <div v-if="formatGoalDate(g.targetDate)" class="dashboard-goal-tile__date">
                   by {{ formatGoalDate(g.targetDate) }}
@@ -296,13 +427,26 @@ function formatGoalDate(iso: string | null) {
               >
                 <div>
                   <div class="dashboard-activity-row__title">{{ formatTxTitle(tx) }}</div>
-                  <div class="small text-muted">
-                    {{ tx.date }}
+                  <div class="small text-muted dashboard-activity-row__meta">
+                    <span>{{ tx.date }}</span>
+                    <span class="dashboard-activity-row__dot" aria-hidden="true">·</span>
+                    <span
+                      class="dashboard-activity-row__kind"
+                      :class="
+                        tx.goalId != null
+                          ? 'dashboard-activity-row__kind--saving'
+                          : 'dashboard-activity-row__kind--expense'
+                      "
+                    >
+                      {{ activityKindLabel(tx) }}
+                    </span>
+                    <span v-if="activityKindDetail(tx)" class="dashboard-activity-row__detail">
+                      · {{ activityKindDetail(tx) }}
+                    </span>
                   </div>
                 </div>
                 <div class="text-end">
                   <div class="dashboard-activity-row__amt">{{ tx.amount.toFixed(2) }}</div>
-                  <div class="small text-muted">{{ tx.source }}</div>
                 </div>
               </li>
             </ul>

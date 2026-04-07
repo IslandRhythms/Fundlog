@@ -7,6 +7,7 @@ import {
   type BudgetSubcategory,
   type Transaction,
   type Goal,
+  type GoalAllocation,
   type BudgetMonthIncomeBoost,
   type Receipt,
   type CreditCard,
@@ -342,7 +343,21 @@ export const TransactionRepository = {
                 description, source, goal_id AS goalId,
                 created_at AS createdAt, updated_at AS updatedAt
          FROM transactions
-         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
+         WHERE profile_id = ? AND budget_id = ? AND source = 'manual' AND goal_id IS NULL
+         ORDER BY date DESC, created_at DESC`,
+      )
+      .all(profileId, budgetId) as Transaction[];
+  },
+  /** Manual transactions tied to a goal (Record savings); excluded from unexpected totals. */
+  listGoalContributions(profileId: number, budgetId: number): Transaction[] {
+    return db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, merchant,
+                description, source, goal_id AS goalId,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM transactions
+         WHERE profile_id = ? AND budget_id = ? AND source = 'manual' AND goal_id IS NOT NULL
          ORDER BY date DESC, created_at DESC`,
       )
       .all(profileId, budgetId) as Transaction[];
@@ -386,12 +401,35 @@ export const TransactionRepository = {
     date: string;
     amount: number;
     description?: string | null;
+    goalId?: number | null;
   }): Transaction {
+    const goalId = input.goalId ?? null;
+    if (goalId != null) {
+      const row = db()
+        .prepare(
+          'SELECT profile_id AS profileId, target_amount AS targetAmount FROM goals WHERE id = ?',
+        )
+        .get(goalId) as { profileId: number; targetAmount: number } | undefined;
+      if (!row || row.profileId !== input.profileId) {
+        throw new Error('Goal not found for this profile.');
+      }
+      const savedRow = db()
+        .prepare(
+          'SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE goal_id = ?',
+        )
+        .get(goalId) as { total: number };
+      const saved = savedRow?.total ?? 0;
+      if (input.amount + saved > row.targetAmount + 1e-6) {
+        throw new Error(
+          "That amount would go over this goal's target. Lower the amount or raise the target on the goal.",
+        );
+      }
+    }
     const createdAt = now();
     const stmt = db().prepare(
       `INSERT INTO transactions
        (profile_id, budget_id, subcategory_id, date, amount, merchant, description, source, goal_id, created_at, updated_at)
-       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, NULL, @description, 'manual', NULL, @createdAt, @createdAt)`,
+       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, NULL, @description, 'manual', @goalId, @createdAt, @createdAt)`,
     );
     const result = stmt.run({
       profileId: input.profileId,
@@ -400,6 +438,7 @@ export const TransactionRepository = {
       date: input.date,
       amount: input.amount,
       description: input.description ?? null,
+      goalId,
       createdAt,
     });
     const id = Number(result.lastInsertRowid);
@@ -419,7 +458,7 @@ export const TransactionRepository = {
     const row = db()
       .prepare(
         `SELECT COALESCE(SUM(amount), 0) AS totalAmount, COUNT(*) AS count
-         FROM transactions WHERE budget_id = ?`,
+         FROM transactions WHERE budget_id = ? AND goal_id IS NULL`,
       )
       .get(budgetId) as { totalAmount: number; count: number };
     return { totalAmount: row.totalAmount, count: row.count };
@@ -611,6 +650,91 @@ export const GoalRepository = {
       throw new Error('Goal was updated but could not be reloaded.');
     }
     return next;
+  },
+  delete(input: { id: number; profileId: number }): void {
+    const row = db()
+      .prepare('SELECT profile_id AS profileId FROM goals WHERE id = ?')
+      .get(input.id) as { profileId: number } | undefined;
+    if (!row || row.profileId !== input.profileId) {
+      throw new Error('Goal not found.');
+    }
+    const result = db().prepare('DELETE FROM goals WHERE id = ?').run(input.id);
+    if (result.changes === 0) {
+      throw new Error('Goal not found.');
+    }
+  },
+};
+
+function allocationFromRow(row: Record<string, unknown>): GoalAllocation {
+  return {
+    id: row.id as number,
+    goalId: row.goalId as number,
+    subcategoryId: row.subcategoryId as number,
+    percent:
+      row.percent === undefined || row.percent === null
+        ? null
+        : (row.percent as number),
+  };
+}
+
+export const GoalAllocationRepository = {
+  listByProfile(profileId: number): GoalAllocation[] {
+    const rows = db()
+      .prepare(
+        `SELECT ga.id AS id, ga.goal_id AS goalId, ga.subcategory_id AS subcategoryId,
+                ga.percent AS percent
+         FROM goal_allocations ga
+         INNER JOIN goals g ON g.id = ga.goal_id
+         WHERE g.profile_id = ?
+         ORDER BY ga.goal_id ASC, ga.id ASC`,
+      )
+      .all(profileId) as Record<string, unknown>[];
+    return rows.map(allocationFromRow);
+  },
+  setForGoal(input: {
+    goalId: number;
+    profileId: number;
+    items: { subcategoryId: number; percent: number | null }[];
+  }): void {
+    const gRow = db()
+      .prepare('SELECT profile_id AS profileId FROM goals WHERE id = ?')
+      .get(input.goalId) as { profileId: number } | undefined;
+    if (!gRow || gRow.profileId !== input.profileId) {
+      throw new Error('Goal not found.');
+    }
+    const seen = new Set<number>();
+    for (const item of input.items) {
+      if (seen.has(item.subcategoryId)) {
+        throw new Error('Duplicate budget line for this goal.');
+      }
+      seen.add(item.subcategoryId);
+      const ok = db()
+        .prepare(
+          `SELECT 1 FROM budget_subcategories bs
+           INNER JOIN budgets b ON b.id = bs.budget_id
+           WHERE bs.id = ? AND b.profile_id = ?`,
+        )
+        .get(item.subcategoryId, input.profileId);
+      if (!ok) {
+        throw new Error('Budget line not found for this profile.');
+      }
+    }
+    const del = db().prepare('DELETE FROM goal_allocations WHERE goal_id = ?');
+    const ins = db().prepare(
+      `INSERT INTO goal_allocations (goal_id, subcategory_id, percent)
+       VALUES (@goalId, @subcategoryId, @percent)`,
+    );
+    const txFn = db().transaction(() => {
+      del.run(input.goalId);
+      for (const item of input.items) {
+        ins.run({
+          goalId: input.goalId,
+          subcategoryId: item.subcategoryId,
+          percent: item.percent ?? null,
+        });
+      }
+    });
+    txFn();
   },
 };
 

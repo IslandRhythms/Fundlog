@@ -7,6 +7,19 @@ defineProps<{
   emptyHint: string;
   ariaLabel?: string;
 }>();
+
+function segmentTitle(seg: PlannedBarSeg): string {
+  const base = `${seg.label}: ${seg.planned.toLocaleString()} planned`;
+  const extra: string[] = [];
+  if (seg.unexpected > 0) {
+    extra.push(`${seg.unexpected.toLocaleString()} unexpected`);
+  }
+  if (seg.goalSavings > 0) {
+    extra.push(`${seg.goalSavings.toLocaleString()} goal savings`);
+  }
+  const tail = extra.length ? ` + ${extra.join(' + ')}` : '';
+  return `${base}${tail} (${seg.pctOfIncome.toFixed(1)}% of income)`;
+}
 </script>
 
 <template>
@@ -27,18 +40,14 @@ defineProps<{
           backgroundColor: seg.color,
           minWidth: seg.barWidthPct > 0 ? '2px' : '0',
         }"
-        :title="
-          seg.unexpected > 0
-            ? `${seg.label}: ${seg.planned.toLocaleString()} planned + ${seg.unexpected.toLocaleString()} unexpected (${seg.pctOfIncome.toFixed(1)}% of income)`
-            : `${seg.label}: ${seg.planned.toLocaleString()} planned (${seg.pctOfIncome.toFixed(1)}% of income)`
-        "
+        :title="segmentTitle(seg)"
       />
       <div
         v-if="unallocatedBarPct > 0.05"
         role="presentation"
         class="planned-bar-unallocated"
         :style="{ width: unallocatedBarPct + '%' }"
-        title="Income not yet reflected in planned or recorded unexpected expenses"
+        title="Income not yet reflected in planned, unexpected, or goal savings"
       />
     </div>
     <div
@@ -67,6 +76,9 @@ defineProps<{
             ({{ seg.planned.toLocaleString() }}
             <template v-if="seg.unexpected > 0">
               + {{ seg.unexpected.toLocaleString() }} unexpected
+            </template>
+            <template v-if="seg.goalSavings > 0">
+              + {{ seg.goalSavings.toLocaleString() }} goal savings
             </template>
             )
           </span>

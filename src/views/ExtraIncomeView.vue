@@ -102,7 +102,7 @@ async function removeRow(r: BudgetMonthIncomeBoost) {
       stays the same; this page layers temporary bumps. The
       <RouterLink to="/dashboard">Dashboard</RouterLink>,
       <RouterLink to="/goals">Goals</RouterLink>
-      fuel ring,
+      page (income & commitments),
       <RouterLink to="/budgets">Budgets</RouterLink>
       percentages, and
       <RouterLink to="/expenses">Expenses</RouterLink>

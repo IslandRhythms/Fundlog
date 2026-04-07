@@ -20,6 +20,7 @@ import {
   BudgetMonthIncomeBoostRepository,
   TransactionRepository,
   GoalRepository,
+  GoalAllocationRepository,
   CategoryRepository,
   ReceiptRepository,
   CreditCardRepository,
@@ -353,6 +354,13 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'transaction:listGoalContributions',
+  (_event, args: { profileId: number; budgetId: number }) => {
+    return TransactionRepository.listGoalContributions(args.profileId, args.budgetId);
+  },
+);
+
+ipcMain.handle(
   'transaction:spendSummaryForBudget',
   (_event, args: { budgetId: number }) => {
     return TransactionRepository.spendSummaryForBudget(args.budgetId);
@@ -655,6 +663,34 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'goal:delete',
+  (_event, args: { id: number; profileId: number }) => {
+    GoalRepository.delete(args);
+  },
+);
+
+ipcMain.handle(
+  'goalAllocation:listByProfile',
+  (_event, args: { profileId: number }) => {
+    return GoalAllocationRepository.listByProfile(args.profileId);
+  },
+);
+
+ipcMain.handle(
+  'goalAllocation:setForGoal',
+  (
+    _event,
+    args: {
+      goalId: number;
+      profileId: number;
+      items: { subcategoryId: number; percent: number | null }[];
+    },
+  ) => {
+    GoalAllocationRepository.setForGoal(args);
+  },
+);
+
+ipcMain.handle(
   'transaction:createManual',
   (
     _event,
@@ -665,6 +701,7 @@ ipcMain.handle(
       date: string;
       amount: number;
       description?: string | null;
+      goalId?: number | null;
     },
   ) => {
     return TransactionRepository.createManual(args);

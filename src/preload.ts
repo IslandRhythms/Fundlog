@@ -5,6 +5,7 @@ import type {
   BudgetMonthIncomeBoost,
   Transaction,
   Goal,
+  GoalAllocation,
   Receipt,
   BudgetCategory,
   BudgetSubcategory,
@@ -119,6 +120,11 @@ export const api = {
       budgetId: number,
     ): Promise<Transaction[]> =>
       ipcRenderer.invoke('transaction:listUnexpected', { profileId, budgetId }),
+    listGoalContributions: async (
+      profileId: number,
+      budgetId: number,
+    ): Promise<Transaction[]> =>
+      ipcRenderer.invoke('transaction:listGoalContributions', { profileId, budgetId }),
     createManual: async (input: {
       profileId: number;
       budgetId: number;
@@ -126,6 +132,7 @@ export const api = {
       date: string;
       amount: number;
       description?: string | null;
+      goalId?: number | null;
     }): Promise<Transaction> => ipcRenderer.invoke('transaction:createManual', input),
     spendSummaryForBudget: async (
       budgetId: number,
@@ -202,6 +209,19 @@ export const api = {
       note?: string | null;
       showOnDashboard?: boolean;
     }): Promise<Goal> => ipcRenderer.invoke('goal:update', input),
+    delete: async (input: { id: number; profileId: number }): Promise<void> =>
+      ipcRenderer.invoke('goal:delete', input),
+  },
+  goalAllocation: {
+    listByProfile: async (
+      profileId: number,
+    ): Promise<GoalAllocation[]> =>
+      ipcRenderer.invoke('goalAllocation:listByProfile', { profileId }),
+    setForGoal: async (input: {
+      goalId: number;
+      profileId: number;
+      items: { subcategoryId: number; percent: number | null }[];
+    }): Promise<void> => ipcRenderer.invoke('goalAllocation:setForGoal', input),
   },
   csv: {
     importTransactions: async (input: {

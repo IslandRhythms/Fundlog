@@ -103,6 +103,10 @@ interface Window {
         profileId: number,
         budgetId: number
       ): Promise<import('./shared/types').Transaction[]>;
+      listGoalContributions(
+        profileId: number,
+        budgetId: number
+      ): Promise<import('./shared/types').Transaction[]>;
       createManual(input: {
         profileId: number;
         budgetId: number;
@@ -110,6 +114,7 @@ interface Window {
         date: string;
         amount: number;
         description?: string | null;
+        goalId?: number | null;
       }): Promise<import('./shared/types').Transaction>;
       spendSummaryForBudget(
         budgetId: number,
@@ -180,6 +185,17 @@ interface Window {
         note?: string | null;
         showOnDashboard?: boolean;
       }): Promise<import('./shared/types').Goal>;
+      delete(input: { id: number; profileId: number }): Promise<void>;
+    };
+    goalAllocation: {
+      listByProfile(
+        profileId: number,
+      ): Promise<import('./shared/types').GoalAllocation[]>;
+      setForGoal(input: {
+        goalId: number;
+        profileId: number;
+        items: { subcategoryId: number; percent: number | null }[];
+      }): Promise<void>;
     };
     csv: {
       importTransactions(input: {

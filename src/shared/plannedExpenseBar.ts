@@ -12,6 +12,9 @@ export function plannedAmountFromSub(sub: BudgetSubcategory): number {
   return 0;
 }
 
+/** Bar segment when goal savings cannot map to a savings category (e.g. custom budgets). */
+export const GOAL_SAVINGS_SYNTHETIC_CATEGORY_ID = -2;
+
 export type PlannedBarSeg = {
   categoryId: number;
   label: string;
@@ -20,6 +23,7 @@ export type PlannedBarSeg = {
   pctOfIncome: number;
   planned: number;
   unexpected: number;
+  goalSavings: number;
 };
 
 export type PlannedExpenseBarResult = {
@@ -27,18 +31,28 @@ export type PlannedExpenseBarResult = {
   unallocatedBarPct: number;
   totalPlanned: number;
   totalUnexpected: number;
+  totalGoalSavings: number;
   combinedOfIncomePct: number;
 };
 
+function goalSavingsParentCategoryId(categories: BudgetCategory[]): number | null {
+  const byKey = categories.find((c) => c.ruleKey === 'savingsDebt');
+  if (byKey) return byKey.id;
+  const byLabel = categories.find((c) => c.label.toLowerCase().includes('savings'));
+  return byLabel?.id ?? null;
+}
+
 /**
  * One bar segment per top-level category: planned line items + unexpected (manual) expenses
- * mapped via subcategory → parent category. Bar width is share of monthly income.
+ * mapped via subcategory → parent category, plus goal savings (Record savings) mapped to the
+ * savings/debt category when present.
  */
 export function computePlannedExpenseBarSegments(
   categories: BudgetCategory[],
   groupedSubcategories: Record<number, BudgetSubcategory[]>,
   subcategories: BudgetSubcategory[],
   unexpectedTxs: Transaction[],
+  goalContributionTxs: Transaction[],
   income: number,
 ): PlannedExpenseBarResult {
   const subById = new Map(subcategories.map((s) => [s.id, s]));
@@ -56,6 +70,8 @@ export function computePlannedExpenseBarSegments(
     0,
   );
   const totalUnexpected = unexpectedTxs.reduce((sum, tx) => sum + tx.amount, 0);
+  const totalGoalSavings = goalContributionTxs.reduce((sum, tx) => sum + tx.amount, 0);
+  const savingsCatId = goalSavingsParentCategoryId(categories);
 
   if (!income || income <= 0) {
     return {
@@ -63,6 +79,7 @@ export function computePlannedExpenseBarSegments(
       unallocatedBarPct: 0,
       totalPlanned,
       totalUnexpected,
+      totalGoalSavings,
       combinedOfIncomePct: 0,
     };
   }
@@ -72,7 +89,8 @@ export function computePlannedExpenseBarSegments(
     const subs = groupedSubcategories[cat.id] ?? [];
     const planned = subs.reduce((sum, sub) => sum + plannedAmountFromSub(sub), 0);
     const unexpected = unexpectedByCategory[cat.id] ?? 0;
-    const total = planned + unexpected;
+    const goalSavings = savingsCatId === cat.id ? totalGoalSavings : 0;
+    const total = planned + unexpected + goalSavings;
     if (total <= 0) continue;
     const pctOfIncome = (total / income) * 100;
     parts.push({
@@ -83,6 +101,21 @@ export function computePlannedExpenseBarSegments(
       pctOfIncome,
       planned,
       unexpected,
+      goalSavings,
+    });
+  }
+
+  if (totalGoalSavings > 0 && savingsCatId === null) {
+    const pctOfIncome = (totalGoalSavings / income) * 100;
+    parts.push({
+      categoryId: GOAL_SAVINGS_SYNTHETIC_CATEGORY_ID,
+      label: 'Goal savings',
+      color: '#22c55e',
+      barWidthPct: pctOfIncome,
+      pctOfIncome,
+      planned: 0,
+      unexpected: 0,
+      goalSavings: totalGoalSavings,
     });
   }
 
@@ -95,7 +128,7 @@ export function computePlannedExpenseBarSegments(
     used = 100;
   }
   const unallocatedBarPct = Math.max(0, 100 - used);
-  const combined = totalPlanned + totalUnexpected;
+  const combined = totalPlanned + totalUnexpected + totalGoalSavings;
   const combinedOfIncomePct = Math.min(100, (combined / income) * 100);
 
   return {
@@ -103,6 +136,7 @@ export function computePlannedExpenseBarSegments(
     unallocatedBarPct,
     totalPlanned,
     totalUnexpected,
+    totalGoalSavings,
     combinedOfIncomePct,
   };
 }

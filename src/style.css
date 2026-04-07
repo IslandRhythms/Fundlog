@@ -966,7 +966,7 @@ html {
   border: 1px solid var(--card-border);
   background: color-mix(in srgb, var(--card-bg) 94%, var(--border));
   border-left: 4px solid var(--accent);
-  min-height: 108px;
+  min-height: 118px;
 }
 
 .dashboard-goal-tile__top {
@@ -995,14 +995,46 @@ html {
   color: var(--card-text);
 }
 
-.dashboard-goal-tile__amount {
+.dashboard-goal-tile__amount-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.35rem;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.dashboard-goal-tile__saved {
+  font-weight: 700;
+  color: color-mix(in srgb, var(--card-text) 90%, var(--muted));
+}
+
+.dashboard-goal-tile__saved--matched {
+  color: var(--success, #22c55e);
+}
+
+.dashboard-goal-tile__target-sep {
+  font-weight: 500;
+}
+
+.dashboard-goal-tile__target {
   font-weight: 600;
-  font-size: 1.05rem;
-  color: var(--card-text);
+  color: color-mix(in srgb, var(--card-text) 72%, var(--muted));
+}
+
+.dashboard-goal-tile__progress-bar {
+  background: color-mix(in srgb, var(--border) 65%, var(--card-bg));
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.dashboard-goal-tile__pct {
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
 }
 
 .dashboard-goal-tile__date {
-  margin-top: 0.25rem;
+  margin-top: 0.35rem;
   font-size: 0.8rem;
   color: var(--muted);
 }
@@ -1023,6 +1055,35 @@ html {
   gap: 0.75rem;
   padding: 0.65rem 0;
   border-bottom: 1px solid color-mix(in srgb, var(--card-border) 75%, transparent);
+}
+
+.dashboard-activity-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.dashboard-activity-row__kind {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.dashboard-activity-row__kind--saving {
+  color: var(--success, #22c55e);
+}
+
+.dashboard-activity-row__kind--expense {
+  color: color-mix(in srgb, var(--card-text) 55%, var(--muted));
+}
+
+.dashboard-activity-row__detail {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .dashboard-activity-row:last-child {
@@ -2006,6 +2067,18 @@ textarea.form-control::placeholder {
 .category-pie-chart {
   width: 100%;
   max-width: 400px;
+  margin-inline: auto;
+}
+
+.unexpected-expenses-bar-chart {
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+.goals-progress-bar-chart {
+  width: 100%;
+  max-width: 560px;
   margin-inline: auto;
 }
 

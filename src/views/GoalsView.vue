@@ -1,21 +1,41 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
+import { useToast } from 'vue-toastification';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
-import { computePlannedExpenseBarSegments } from '../shared/plannedExpenseBar';
+import {
+  computePlannedExpenseBarSegments,
+  plannedAmountFromSub,
+} from '../shared/plannedExpenseBar';
+import {
+  goalProgressPctWithBudget,
+  monthlyPlanTowardGoal,
+} from '../shared/goalBudgetProgress';
 import { calendarMonthNow } from '../shared/calendarMonth';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
+import GoalsProgressBarChart from '../components/GoalsProgressBarChart.vue';
 import LoadingView from '../components/LoadingView.vue';
 import type {
   BudgetCategory,
   BudgetSubcategory,
   Goal,
+  GoalAllocation,
   Profile,
   Transaction,
 } from '../shared/types';
 
 const domain = useDomainStore();
+const toast = useToast();
+
+const contributionGoal = ref<Goal | null>(null);
+const contributionAmount = ref<number | null>(null);
+const contributionDate = ref('');
+const contributionDescription = ref('');
+const contributionSubmitting = ref(false);
+
+const goalToDelete = ref<Goal | null>(null);
+const deleteSubmitting = ref(false);
 
 const name = ref('');
 const targetAmount = ref<number | null>(null);
@@ -37,7 +57,11 @@ const editFormError = ref<string | null>(null);
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
+const goalContributionTxs = ref<Transaction[]>([]);
+const goalAllocations = ref<GoalAllocation[]>([]);
 const loadingBudget = ref(false);
+
+const editLinkedSubcategoryIds = ref<number[]>([]);
 
 const priorityOptions: { value: number; label: string }[] = [
   { value: 5, label: '5 — Highest (break ties on Dashboard)' },
@@ -59,11 +83,36 @@ const groupedSubcategories = computed(() => {
   return grouped;
 });
 
+/** Budget lines grouped by parent category (for linking goals in Edit goal). */
+const subsByParentForEdit = computed(() =>
+  [...categories.value]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((cat) => ({
+      category: cat,
+      subs: subcategories.value
+        .filter((s) => s.parentCategoryId === cat.id)
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+    }))
+    .filter((x) => x.subs.length > 0),
+);
+
+function plannedLineMonthlyAmount(sub: BudgetSubcategory): string {
+  return formatMoney(plannedAmountFromSub(sub), currencyCode());
+}
+
+function toggleEditLinkedSub(subId: number, checked: boolean) {
+  const next = new Set(editLinkedSubcategoryIds.value);
+  if (checked) next.add(subId);
+  else next.delete(subId);
+  editLinkedSubcategoryIds.value = [...next];
+}
+
 async function loadBudgetDetails() {
   if (!activeBudget.value || !domain.activeProfileId) {
     categories.value = [];
     subcategories.value = [];
     unexpectedTxs.value = [];
+    goalContributionTxs.value = [];
     return;
   }
   loadingBudget.value = true;
@@ -71,12 +120,35 @@ async function loadBudgetDetails() {
     const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = result.categories;
     subcategories.value = result.subcategories;
-    unexpectedTxs.value = await window.fundlog.transaction.listUnexpected(
-      domain.activeProfileId,
-      activeBudget.value.id,
-    );
+    const [unexpected, goalContrib] = await Promise.all([
+      window.fundlog.transaction.listUnexpected(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+      window.fundlog.transaction.listGoalContributions(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+    ]);
+    unexpectedTxs.value = unexpected;
+    goalContributionTxs.value = goalContrib;
   } finally {
     loadingBudget.value = false;
+  }
+}
+
+async function loadGoalAllocations() {
+  if (!domain.activeProfileId) {
+    goalAllocations.value = [];
+    return;
+  }
+  try {
+    goalAllocations.value = await window.fundlog.goalAllocation.listByProfile(
+      domain.activeProfileId,
+    );
+  } catch (e) {
+    console.error(e);
+    goalAllocations.value = [];
   }
 }
 
@@ -86,6 +158,7 @@ onMounted(async () => {
   await domain.loadTransactions();
   await domain.loadGoals();
   await loadBudgetDetails();
+  await loadGoalAllocations();
 });
 
 watch(
@@ -93,6 +166,14 @@ watch(
   async () => {
     await domain.loadTransactions();
     await loadBudgetDetails();
+    await loadGoalAllocations();
+  },
+);
+
+watch(
+  () => domain.activeProfileId,
+  async () => {
+    await loadGoalAllocations();
   },
 );
 
@@ -131,12 +212,16 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
+    goalContributionTxs.value,
     monthlyIncome.value,
   ),
 );
 
 const committedTotal = computed(
-  () => plannedBarResult.value.totalPlanned + plannedBarResult.value.totalUnexpected,
+  () =>
+    plannedBarResult.value.totalPlanned +
+    plannedBarResult.value.totalUnexpected +
+    plannedBarResult.value.totalGoalSavings,
 );
 
 const remainingHeadroom = computed(() => monthlyIncome.value - committedTotal.value);
@@ -169,6 +254,21 @@ function savedTowardGoal(goalId: number): number {
     .filter((t) => t.goalId === goalId)
     .reduce((sum, t) => sum + t.amount, 0);
 }
+
+function goalContributionRoom(g: Goal): number {
+  return Math.max(0, g.targetAmount - savedTowardGoal(g.id));
+}
+
+function isGoalTargetFullyFunded(g: Goal): boolean {
+  if (g.targetAmount <= 0) return true;
+  return savedTowardGoal(g.id) + 1e-9 >= g.targetAmount;
+}
+
+const contributionRemaining = computed(() => {
+  const g = contributionGoal.value;
+  if (!g) return 0;
+  return goalContributionRoom(g);
+});
 
 /** Whole months from now until the target month (at least 1). */
 function monthsRemainingToDate(iso: string): number | null {
@@ -214,10 +314,53 @@ function paceStatusClass(pace: GoalPace): string {
 }
 
 const goalRows = computed(() =>
-  goals.value.map((goal) => ({
-    goal,
-    pace: paceForGoal(goal),
-  })),
+  goals.value.map((goal) => {
+    const pace = paceForGoal(goal);
+    const planThisMonth = monthlyPlanTowardGoal(
+      goal.id,
+      goalAllocations.value,
+      subcategories.value,
+    );
+    const pctWithBudget = goalProgressPctWithBudget(
+      goal,
+      pace.saved,
+      goalAllocations.value,
+      subcategories.value,
+    );
+    return { goal, pace, planThisMonth, pctWithBudget };
+  }),
+);
+
+const goalChartLabelMaxLen = 40;
+
+const goalChartSegments = computed(() =>
+  goals.value.map((g) => {
+    const pace = paceForGoal(g);
+    const planThisMonth = monthlyPlanTowardGoal(
+      g.id,
+      goalAllocations.value,
+      subcategories.value,
+    );
+    const pctWithBudget = goalProgressPctWithBudget(
+      g,
+      pace.saved,
+      goalAllocations.value,
+      subcategories.value,
+    );
+    const name = g.name.trim() || 'Goal';
+    const label =
+      name.length > goalChartLabelMaxLen
+        ? `${name.slice(0, goalChartLabelMaxLen - 1)}…`
+        : name;
+    return {
+      label,
+      fullLabel: name,
+      progressPct: pctWithBudget,
+      saved: pace.saved,
+      target: g.targetAmount,
+      planThisMonth,
+    };
+  }),
 );
 
 function formatTargetDate(iso: string | null) {
@@ -260,11 +403,15 @@ function openEditGoalModal(g: Goal) {
   editNote.value = g.note ?? '';
   editShowOnDashboard.value = g.showOnDashboard;
   editFormError.value = null;
+  editLinkedSubcategoryIds.value = goalAllocations.value
+    .filter((a) => a.goalId === g.id)
+    .map((a) => a.subcategoryId);
 }
 
 function onEditGoalModalHidden() {
   editingGoalId.value = null;
   editFormError.value = null;
+  editLinkedSubcategoryIds.value = [];
 }
 
 async function submitEdit() {
@@ -293,6 +440,22 @@ async function submitEdit() {
     showOnDashboard: editShowOnDashboard.value,
   });
   if (!ok) return;
+  if (!domain.activeProfileId) return;
+  try {
+    await window.fundlog.goalAllocation.setForGoal({
+      goalId: id,
+      profileId: domain.activeProfileId,
+      items: editLinkedSubcategoryIds.value.map((subcategoryId) => ({
+        subcategoryId,
+        percent: null as number | null,
+      })),
+    });
+    await loadGoalAllocations();
+  } catch (e) {
+    console.error(e);
+    toast.error('Goal saved, but budget links could not be updated.');
+    return;
+  }
   hideBsModal('editGoalModal');
   editingGoalId.value = null;
 }
@@ -343,6 +506,90 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
   const ok = await domain.updateGoal({ id: g.id, priority: next });
   if (!ok) el.value = String(prev);
 }
+
+function openRecordContributionModal(g: Goal) {
+  contributionGoal.value = g;
+  contributionAmount.value = null;
+  contributionDate.value = new Date().toISOString().slice(0, 10);
+  contributionDescription.value = '';
+}
+
+function onContributionModalHidden() {
+  contributionGoal.value = null;
+  contributionAmount.value = null;
+  contributionDate.value = '';
+  contributionDescription.value = '';
+  contributionSubmitting.value = false;
+}
+
+function openDeleteGoalModal(g: Goal) {
+  goalToDelete.value = g;
+}
+
+function onDeleteGoalModalHidden() {
+  goalToDelete.value = null;
+  deleteSubmitting.value = false;
+}
+
+async function confirmDeleteGoal() {
+  const g = goalToDelete.value;
+  if (!g || deleteSubmitting.value) return;
+  deleteSubmitting.value = true;
+  const ok = await domain.deleteGoal(g.id);
+  deleteSubmitting.value = false;
+  if (ok) {
+    await loadGoalAllocations();
+    hideBsModal('deleteGoalModal');
+  }
+}
+
+async function submitRecordContribution() {
+  const g = contributionGoal.value;
+  const b = activeBudget.value;
+  const pid = domain.activeProfileId;
+  if (!g || !b || !pid) return;
+  if (
+    contributionAmount.value == null ||
+    contributionAmount.value <= 0 ||
+    !Number.isFinite(contributionAmount.value)
+  ) {
+    toast.error('Enter a positive amount.');
+    return;
+  }
+  const room = goalContributionRoom(g);
+  if (room <= 1e-9) {
+    toast.error("This goal's target is already met. Raise the target on the goal to add more.");
+    return;
+  }
+  if (contributionAmount.value > room + 1e-6) {
+    toast.error(
+      `You can add at most ${formatMoney(room, currencyCode())} without exceeding the target.`,
+    );
+    return;
+  }
+  const date = contributionDate.value.trim() || new Date().toISOString().slice(0, 10);
+  const desc = contributionDescription.value.trim();
+  contributionSubmitting.value = true;
+  try {
+    await window.fundlog.transaction.createManual({
+      profileId: pid,
+      budgetId: b.id,
+      subcategoryId: null,
+      date,
+      amount: contributionAmount.value,
+      description: desc || `Savings: ${g.name}`,
+      goalId: g.id,
+    });
+    await domain.loadTransactions();
+    toast.success('Saved toward goal.');
+    hideBsModal('recordGoalContributionModal');
+  } catch (e) {
+    console.error(e);
+    toast.error('Could not record savings.');
+  } finally {
+    contributionSubmitting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -373,14 +620,16 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
               lines for <strong>this calendar month</strong>. Changing either updates the ring.
             </li>
             <li>
-              <strong>Committed</strong> — planned subcategories plus unexpected expenses from
-              <RouterLink to="/expenses">Expenses</RouterLink>. Adding lines or spending here uses
-              up headroom, like logging meals in a calorie app.
+              <strong>Committed</strong> — planned subcategories, unexpected expenses from
+              <RouterLink to="/expenses">Expenses</RouterLink>, and
+              <strong>Record savings</strong> below (goal-linked amounts, counted like the rest of the
+              plan). Adding any of these uses up headroom.
             </li>
             <li>
-              <strong>Goals below</strong> — progress uses amounts recorded on transactions linked to
-              each goal (when your flows set that). The pace line compares your deadline to this
-              month’s headroom so you see if the budget has room to hit the target.
+              <strong>Goals below</strong> — progress adds up amounts you record with
+              <strong>Record savings</strong> on each goal (stored as transactions tied to that goal).
+              The pace line compares your deadline to this month’s headroom so you see if the budget has
+              room to hit the target.
             </li>
           </ul>
         </div>
@@ -393,7 +642,7 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
         <div class="card-body py-3 py-md-4">
           <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
             <div>
-              <h3 class="h5 mb-1 goals-budget-fuel-title">Monthly budget fuel</h3>
+              <h3 class="h5 mb-1 goals-budget-fuel-title">This month’s income & commitments</h3>
               <p class="small text-muted mb-0">
                 <strong>{{ activeBudget.name }}</strong>
                 <span class="text-body-secondary"> · income vs. what your plan already commits</span>
@@ -477,7 +726,7 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                 <PlannedExpenseCategoryBar
                   :category-parts="plannedBarResult.categoryParts"
                   :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-                  empty-hint="Add planned line items on Budgets or log expenses to see the split."
+                  empty-hint="Add planned lines on Budgets, log unexpected expenses, or record goal savings to see the split."
                   aria-label="Committed spending by category as a share of income"
                 />
               </div>
@@ -492,6 +741,40 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
         to see monthly headroom next to your goals. You can still add goals below.
       </p>
 
+      <section
+        v-if="goals.length"
+        class="card border shadow-none mb-4 goals-progress-chart-card"
+      >
+        <div class="card-body py-3">
+          <h3 class="h6 mb-2 goals-progress-chart-title">Progress toward each goal</h3>
+          <p class="small text-muted mb-2">
+            Bar length matches the list below: <strong>recorded savings</strong> plus, when you link
+            budget lines in <strong>Edit goal</strong>, up to this month’s planned amount from those
+            lines toward whatever is still needed to hit the target. It is
+            <strong>not</strong> the ring in <strong>This month’s income & commitments</strong>
+            above—that ring is <em>income vs commitments</em> for the month.
+          </p>
+          <ul class="small text-muted mb-3 mb-md-2 ps-3">
+            <li class="mb-1">
+              <strong>Each row</strong> is one goal (priority order, same as the list).
+            </li>
+            <li class="mb-1">
+              <strong>Bar length</strong> is 0–100% of the goal’s target. Hover a bar for recorded
+              amounts and, when linked lines exist, how much of this month’s plan counts toward the gap.
+            </li>
+            <li class="mb-0">
+              <strong>Record savings</strong> still moves the bar with real transactions. Linking
+              budget lines only affects the displayed progress (this month’s plan slice), not your
+              savings ledger.
+            </li>
+          </ul>
+          <GoalsProgressBarChart
+            :segments="goalChartSegments"
+            :currency-code="currencyCode()"
+          />
+        </div>
+      </section>
+
       <div class="row g-3">
         <div class="col-12">
           <section class="card card-list stacked-section h-100 goals-panel border shadow-none">
@@ -504,7 +787,9 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                     · {{ activeProfile?.currencyCode }} amounts
                     ·
                     <span class="text-body-secondary">{{ dashboardEligibleCount }} on Dashboard</span>
-                    (shows top 3 by priority)
+                    (shows top 3 by priority). Use <strong>Edit goal</strong> to link budget lines so
+                    this month’s planned amounts can count toward the progress bar (up to the amount
+                    still needed).
                   </p>
                 </div>
                 <button
@@ -540,7 +825,7 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                 class="list-group list-group-flush rounded-3 border border-secondary-subtle goals-dashboard-list"
               >
                 <li
-                  v-for="{ goal: g, pace } in goalRows"
+                  v-for="{ goal: g, pace, planThisMonth, pctWithBudget } in goalRows"
                   :key="g.id"
                   class="list-group-item border-secondary-subtle px-3 px-md-4 py-4 bg-transparent"
                 >
@@ -569,7 +854,7 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                           <span class="text-body-secondary">
                             {{ formatMoney(pace.saved, currencyCode()) }}
                             ·
-                            {{ pace.progressPct.toFixed(0) }}%
+                            {{ pace.progressPct.toFixed(0) }}% recorded
                           </span>
                         </div>
                         <div class="progress goals-goal-progress__bar" style="height: 6px">
@@ -577,13 +862,21 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                             class="progress-bar"
                             role="progressbar"
                             :style="{
-                              width: Math.min(100, pace.progressPct) + '%',
+                              width: Math.min(100, pctWithBudget) + '%',
                             }"
-                            :aria-valuenow="Math.round(Math.min(100, pace.progressPct))"
+                            :aria-valuenow="Math.round(Math.min(100, pctWithBudget))"
                             aria-valuemin="0"
                             aria-valuemax="100"
                           />
                         </div>
+                        <p class="small text-muted mb-0 mt-1">
+                          {{ pctWithBudget.toFixed(0) }}% toward target
+                          <template v-if="planThisMonth > 0 && pace.saved + 1e-9 < g.targetAmount">
+                            (includes up to
+                            {{ formatMoney(Math.min(planThisMonth, Math.max(0, g.targetAmount - pace.saved)), currencyCode()) }}
+                            from this month’s linked budget lines)
+                          </template>
+                        </p>
                         <p
                           v-if="pace.neededPerMonth != null && pace.monthsLeft != null"
                           class="small mb-0 mt-2 goals-goal-pace"
@@ -595,6 +888,11 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                           {{ pace.monthsLeft }}
                           {{ pace.monthsLeft === 1 ? 'month' : 'months' }}. This month’s headroom is
                           <strong>{{ formatMoney(remainingHeadroom, currencyCode()) }}</strong>.
+                          <template v-if="planThisMonth > 0 && pace.remainingToFund > 0">
+                            Linked budget lines plan
+                            <strong>{{ formatMoney(planThisMonth, currencyCode()) }}</strong>
+                            /mo toward what is left after recorded savings.
+                          </template>
                           <template v-if="pace.remainingToFund <= 0">
                             Target balance reached on paper—nice work.
                           </template>
@@ -625,6 +923,24 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                       <div class="d-flex flex-column gap-3 align-items-stretch align-items-lg-end">
                         <button
                           type="button"
+                          class="btn btn-outline-primary btn-sm align-self-stretch align-self-lg-end"
+                          style="max-width: 15rem"
+                          data-bs-toggle="modal"
+                          data-bs-target="#recordGoalContributionModal"
+                          :disabled="!activeBudget || isGoalTargetFullyFunded(g)"
+                          :title="
+                            !activeBudget
+                              ? 'Select an active budget on the Budgets page first'
+                              : isGoalTargetFullyFunded(g)
+                                ? 'Target amount reached—edit the goal to raise the target if needed'
+                                : 'Log money you put toward this goal'
+                          "
+                          @click="openRecordContributionModal(g)"
+                        >
+                          Record savings
+                        </button>
+                        <button
+                          type="button"
                           class="btn btn-outline-secondary btn-sm align-self-stretch align-self-lg-end"
                           style="max-width: 15rem"
                           data-bs-toggle="modal"
@@ -632,6 +948,16 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                           @click="openEditGoalModal(g)"
                         >
                           Edit goal
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline-danger btn-sm align-self-stretch align-self-lg-end"
+                          style="max-width: 15rem"
+                          data-bs-toggle="modal"
+                          data-bs-target="#deleteGoalModal"
+                          @click="openDeleteGoalModal(g)"
+                        >
+                          Delete goal
                         </button>
                         <div class="form-check form-switch mb-0">
                           <input
@@ -879,11 +1205,189 @@ async function onGoalPriorityChange(g: Goal, ev: Event) {
                   </label>
                 </div>
               </div>
+              <div class="col-12">
+                <label class="form-label mb-1">Budget lines for this goal (this month)</label>
+                <p class="small text-muted mb-2">
+                  Checked lines add their <strong>planned monthly amount</strong> from your active
+                  budget to the progress bar, up to what is still needed after recorded savings.
+                </p>
+                <div
+                  v-if="!subsByParentForEdit.length"
+                  class="small text-muted border rounded px-2 py-2 mb-0"
+                >
+                  No planned lines in this budget yet. Add subcategories and amounts on
+                  <RouterLink to="/budgets">Budgets</RouterLink>.
+                </div>
+                <div
+                  v-else
+                  class="border rounded px-2 py-2 goals-edit-budget-links"
+                  style="max-height: 14rem; overflow-y: auto"
+                >
+                  <div
+                    v-for="{ category, subs } in subsByParentForEdit"
+                    :key="category.id"
+                    class="mb-2"
+                  >
+                    <div class="small fw-semibold text-body-secondary mb-1">{{ category.label }}</div>
+                    <div v-for="sub in subs" :key="sub.id" class="form-check ms-1 mb-1">
+                      <input
+                        :id="'edit-goal-link-sub-' + sub.id"
+                        class="form-check-input"
+                        type="checkbox"
+                        :checked="editLinkedSubcategoryIds.includes(sub.id)"
+                        @change="
+                          toggleEditLinkedSub(
+                            sub.id,
+                            ($event.target as HTMLInputElement).checked,
+                          )
+                        "
+                      />
+                      <label class="form-check-label small" :for="'edit-goal-link-sub-' + sub.id">
+                        {{ sub.label }}
+                        <span class="text-muted">({{ plannedLineMonthlyAmount(sub) }}/mo)</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
             <button type="submit" class="btn btn-primary">Save changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="modal fade"
+    id="deleteGoalModal"
+    tabindex="-1"
+    aria-labelledby="deleteGoalModalLabel"
+    aria-hidden="true"
+    @hidden.bs.modal="onDeleteGoalModalHidden"
+  >
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header border-danger border-opacity-25">
+          <h5 class="modal-title text-danger" id="deleteGoalModalLabel">Delete goal</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">
+            Delete
+            <strong v-if="goalToDelete">{{ goalToDelete.name }}</strong>
+            <span v-else>this goal</span>
+            ? This cannot be undone.
+          </p>
+          <p class="small text-muted mb-0">
+            Savings transactions that pointed at this goal will stay on your
+            <RouterLink to="/transactions">Transactions</RouterLink>
+            list; they are simply no longer linked to a goal.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button
+            type="button"
+            class="btn btn-danger"
+            :disabled="deleteSubmitting || !goalToDelete"
+            @click="confirmDeleteGoal"
+          >
+            Delete goal
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="modal fade"
+    id="recordGoalContributionModal"
+    tabindex="-1"
+    aria-labelledby="recordGoalContributionModalLabel"
+    aria-hidden="true"
+    @hidden.bs.modal="onContributionModalHidden"
+  >
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title" id="recordGoalContributionModalLabel">Record savings</h5>
+            <p v-if="contributionGoal" class="small text-muted mb-0">
+              Toward <strong>{{ contributionGoal.name }}</strong>
+              <template v-if="activeBudget">
+                · budget <strong>{{ activeBudget.name }}</strong>
+              </template>
+            </p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form @submit.prevent="submitRecordContribution">
+          <div class="modal-body">
+            <p v-if="!activeBudget" class="small text-danger mb-3 mb-md-2">
+              Choose an active budget on the
+              <RouterLink to="/budgets">Budgets</RouterLink>
+              page before recording savings.
+            </p>
+            <div v-else class="row g-3">
+              <p v-if="contributionGoal" class="col-12 small text-muted mb-0">
+                <template v-if="contributionRemaining > 0">
+                  Up to
+                  <strong>{{ formatMoney(contributionRemaining, currencyCode()) }}</strong>
+                  left before you hit this goal's target.
+                </template>
+                <template v-else> This goal's target is already met. </template>
+              </p>
+              <div class="col-12">
+                <label class="form-label" for="contribution-amount">Amount</label>
+                <div class="input-group">
+                  <span class="input-group-text">{{
+                    activeProfile?.currencyCode?.trim() || 'USD'
+                  }}</span>
+                  <input
+                    id="contribution-amount"
+                    v-model.number="contributionAmount"
+                    type="number"
+                    min="0"
+                    :max="contributionRemaining > 0 ? contributionRemaining : undefined"
+                    step="0.01"
+                    class="form-control"
+                    placeholder="e.g. 100"
+                    required
+                  />
+                </div>
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="contribution-date">Date</label>
+                <input id="contribution-date" v-model="contributionDate" type="date" class="form-control" />
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="contribution-note">Note (optional)</label>
+                <input
+                  id="contribution-note"
+                  v-model="contributionDescription"
+                  type="text"
+                  class="form-control"
+                  placeholder="e.g. Transfer to savings account"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button
+              type="submit"
+              class="btn btn-primary"
+              :disabled="
+                !activeBudget || contributionSubmitting || contributionRemaining <= 0
+              "
+            >
+              Save to goal
+            </button>
           </div>
         </form>
       </div>

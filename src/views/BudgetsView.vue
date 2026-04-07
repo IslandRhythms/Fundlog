@@ -60,6 +60,7 @@ const ruleSet = ref<'fiftyThirtyTwenty' | 'custom'>('fiftyThirtyTwenty');
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
+const goalContributionTxs = ref<Transaction[]>([]);
 const editingCategoryId = ref<number | null>(null);
 const newLabel = ref('');
 const newType = ref<'fixed' | 'variable'>('fixed');
@@ -119,11 +120,18 @@ async function loadCategories() {
   const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
   categories.value = result.categories;
   subcategories.value = result.subcategories;
-  const unexpected = await window.fundlog.transaction.listUnexpected(
-    domain.activeProfileId,
-    activeBudget.value.id,
-  );
+  const [unexpected, goalContrib] = await Promise.all([
+    window.fundlog.transaction.listUnexpected(
+      domain.activeProfileId,
+      activeBudget.value.id,
+    ),
+    window.fundlog.transaction.listGoalContributions(
+      domain.activeProfileId,
+      activeBudget.value.id,
+    ),
+  ]);
   unexpectedTxs.value = unexpected;
+  goalContributionTxs.value = goalContrib;
 }
 
 const groupedSubcategories = computed(() => {
@@ -152,6 +160,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
+    goalContributionTxs.value,
     planningMonthIncome.value,
   ),
 );
@@ -323,8 +332,11 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
               Planned expenses for {{ activeBudget.name }}
             </h3>
             <p class="small text-muted mb-2">
-              Configure fixed and variable expenses within each category. Unexpected expenses
-              from the Expenses page are included by category. Percentages below use
+              Configure fixed and variable expenses within each category. Unexpected expenses from
+              the Expenses page and goal savings from
+              <RouterLink to="/goals">Goals</RouterLink>
+              (Record savings) roll into the bar—goal amounts map to your savings/debt category when
+              possible. Percentages use
               <strong>this calendar month’s</strong> effective income (budget base plus
               <RouterLink to="/extra-income">Extra income</RouterLink>
               for the month).
@@ -366,17 +378,40 @@ async function updateCategoryColor(cat: BudgetCategory, color: string) {
                 </span>
               </span>
             </div>
+            <div class="mb-2 d-flex flex-wrap justify-content-between gap-2 small">
+              <span>Goal savings (Record savings)</span>
+              <span>
+                {{ plannedBarResult.totalGoalSavings.toLocaleString() }}
+                <span
+                  v-if="planningMonthIncome && plannedBarResult.totalGoalSavings"
+                  class="text-muted"
+                >
+                  ({{
+                    (
+                      (plannedBarResult.totalGoalSavings / planningMonthIncome) *
+                      100
+                    ).toFixed(1)
+                  }}% of income)
+                </span>
+              </span>
+            </div>
             <div class="mb-1 d-flex flex-wrap justify-content-between gap-2 small fw-semibold">
               <span>Combined</span>
               <span>
-                {{ (plannedBarResult.totalPlanned + plannedBarResult.totalUnexpected).toLocaleString() }}
+                {{
+                  (
+                    plannedBarResult.totalPlanned +
+                    plannedBarResult.totalUnexpected +
+                    plannedBarResult.totalGoalSavings
+                  ).toLocaleString()
+                }}
                 ({{ totalPercent.toFixed(1) }}% of income)
               </span>
             </div>
             <PlannedExpenseCategoryBar
               :category-parts="plannedBarResult.categoryParts"
               :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-              empty-hint="Add planned amounts or record unexpected expenses to see spending by category on one bar."
+              empty-hint="Add planned amounts, unexpected expenses, or goal savings to see spending by category on one bar."
             />
           </div>
         </section>
