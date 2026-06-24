@@ -2,10 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useDomainStore } from '../stores/domain';
-import CategoryPieChart from '../components/CategoryPieChart.vue';
+import BudgetPieCompare from '../components/BudgetPieCompare.vue';
+import CollapsibleSection from '../components/CollapsibleSection.vue';
 import LoadingView from '../components/LoadingView.vue';
+import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
-import { computePlannedExpenseBarSegments } from '../shared/plannedExpenseBar';
+import { computePlannedExpenseBarSegments, buildPieSegments } from '../shared/plannedExpenseBar';
+import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import {
   goalProgressPctWithBudget,
   monthlyPlanTowardGoal,
@@ -112,8 +115,6 @@ watch(
   },
 );
 
-const splitCategories = computed(() => categories.value);
-
 const baseMonthlyIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
 
 const monthlyIncome = computed(() => {
@@ -134,8 +135,38 @@ const plannedBarResult = computed(() =>
     unexpectedTxs.value,
     goalContributionTxs.value,
     monthlyIncome.value,
+    calendarMonthNow(),
   ),
 );
+
+const headroom = computed(() =>
+  computeBudgetHeadroom(categories.value, plannedBarResult.value, monthlyIncome.value),
+);
+
+const monthLabel = computed(() => {
+  const ym = calendarMonthNow();
+  const [y, m] = ym.split('-');
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+});
+
+const pieSegments = computed(() => buildPieSegments(plannedBarResult.value, monthlyIncome.value));
+
+const allocationTargetCaption = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return '';
+  if (b.ruleSet === 'fiftyThirtyTwenty') return '50 / 30 / 20 rule targets';
+  return 'Custom category targets';
+});
+
+function formatMoney(amount: number) {
+  const code = activeProfile.value?.currencyCode?.trim() || 'USD';
+  try {
+    return amount.toLocaleString(undefined, { style: 'currency', currency: code });
+  } catch {
+    return `${amount.toLocaleString()} ${code}`;
+  }
+}
 
 const totalPercent = computed(() => plannedBarResult.value.combinedOfIncomePct);
 
@@ -217,141 +248,131 @@ function activityKindDetail(tx: Transaction): string | null {
 </script>
 
 <template>
-  <div class="view container-fluid">
+  <div class="view view-dashboard container-fluid">
+    <p class="view-page-eyebrow mb-1">Snapshot</p>
     <h2 class="mb-2">Dashboard</h2>
     <p class="view-subtitle mb-4">
-      Overview of your current budget, planned expenses, and goals.
+      Your month at a glance — how much is safe to spend, and which bucket you’re in.
     </p>
 
     <div class="row g-3">
-      <div class="col-12">
-        <div class="card h-100">
-          <div class="card-body">
-            <h3 class="h5 card-title mb-3">Budget overview</h3>
-            <p v-if="!activeBudget" class="mb-0 text-muted">
-              Create a budget to see your allocation and expenses here.
-            </p>
-            <template v-else>
-              <LoadingView v-if="loading" message="Loading budget details…" />
-              <template v-else>
-                <p class="mb-1">
-                  <strong>{{ activeBudget.name }}</strong>
-                  <span class="text-muted">
-                    (from {{ activeBudget.startMonth }})
-                  </span>
-                </p>
-                <p class="small text-muted mb-2">
-                  Monthly income (this calendar month)
-                  {{ monthlyIncome.toLocaleString() }}
-                  <template v-if="monthIncomeBoost > 0">
-                    <span class="d-block mt-1">
-                      Includes {{ monthIncomeBoost.toLocaleString() }} extra from
-                      <RouterLink to="/extra-income">Extra income</RouterLink>
-                      (base {{ baseMonthlyIncome.toLocaleString() }}).
-                    </span>
-                  </template>
-                </p>
-
-                <div class="mb-3">
-                  <div class="d-flex flex-wrap justify-content-between gap-2 small mb-1">
-                    <span>Planned + unexpected + goal savings</span>
-                    <span>
-                      {{
-                        (
-                          plannedBarResult.totalPlanned +
-                          plannedBarResult.totalUnexpected +
-                          plannedBarResult.totalGoalSavings
-                        ).toLocaleString()
-                      }}
-                      ({{ totalPercent.toFixed(1) }}% of income)
-                    </span>
-                  </div>
-                  <PlannedExpenseCategoryBar
-                    :category-parts="plannedBarResult.categoryParts"
-                    :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-                    empty-hint="Add planned lines, unexpected expenses, or goal savings to see your budget mix here."
-                  />
-                </div>
-
-                <div v-if="splitCategories.length" class="mb-3">
-                  <div class="d-flex justify-content-between small mb-1">
-                    <span>Rule allocation</span>
-                    <span>100%</span>
-                  </div>
-                  <div class="progress" style="height: 8px">
-                    <div
-                      v-for="cat in splitCategories"
-                      :key="cat.id"
-                      class="progress-bar"
-                      role="progressbar"
-                      :style="{
-                        width: cat.targetPercent + '%',
-                        backgroundColor: cat.color,
-                      }"
-                      :aria-valuenow="cat.targetPercent"
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                    />
-                  </div>
-                  <div class="d-flex flex-wrap gap-2 mt-2 small">
-                    <div
-                      v-for="cat in splitCategories"
-                      :key="cat.id"
-                      class="d-flex align-items-center gap-1"
-                    >
-                      <span
-                        class="rounded-circle"
-                        :style="{
-                          width: '10px',
-                          height: '10px',
-                          display: 'inline-block',
-                          backgroundColor: cat.color,
-                        }"
-                      />
-                      <span>
-                        {{ cat.label }} ({{ cat.targetPercent }}%)
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <h4 class="h6 card-title mt-3 mb-2">50 / 30 / 20 allocation</h4>
-                <CategoryPieChart
-                  v-if="splitCategories.length"
-                  :categories="splitCategories"
-                />
-                <p v-else class="small text-muted mb-0">
-                  Categories will appear here once expenses are configured for this budget.
-                </p>
-              </template>
-            </template>
-          </div>
-        </div>
+      <div v-if="activeBudget && !loading" class="col-12">
+        <CollapsibleSection
+          title="What's left"
+          :meta="headroom.spendingTiers.memorableLine ?? monthLabel"
+          storage-key="dashboard-money-left"
+          integrated
+        >
+          <MoneyLeftSummary
+            embedded
+            variant="snapshot"
+            :headroom="headroom"
+            :currency-code="activeProfile?.currencyCode ?? 'USD'"
+            :month-label="monthLabel"
+          />
+        </CollapsibleSection>
       </div>
+
       <div class="col-12">
-        <section class="card h-100 dashboard-section-goals overflow-hidden">
-          <div class="dashboard-section-goals__head">
-            <div>
-              <h3 class="h5 mb-1 dashboard-section-goals__title">Top goals</h3>
-              <p class="small mb-0 dashboard-section-goals__lede">
-                Up to three goals you marked for the dashboard
-                <span v-if="activeProfile">({{ activeProfile.currencyCode }})</span>
-                , ordered by priority. Choose them on the
-                <RouterLink to="/goals" class="dashboard-goals-link">Goals</RouterLink>
-                page.
-              </p>
-            </div>
-            <RouterLink to="/goals" class="btn btn-sm btn-outline-primary dashboard-section-goals__cta">
+        <CollapsibleSection
+          class="dashboard-panel"
+          title="Income allocation"
+          :meta="activeBudget ? `${activeBudget.name} · ${monthLabel}` : undefined"
+          :default-expanded="false"
+          storage-key="dashboard-allocation-compare"
+        >
+          <p v-if="!activeBudget" class="mb-0">
+            Create a budget to see your allocation here.
+          </p>
+          <LoadingView v-else-if="loading" message="Loading budget details…" />
+          <BudgetPieCompare
+            v-else-if="categories.length"
+            :categories="categories"
+            :actual-segments="pieSegments"
+            :income="monthlyIncome"
+            :currency-code="activeProfile?.currencyCode?.trim() || 'USD'"
+            actual-caption="Planned, unexpected, and goal savings"
+            :target-caption="allocationTargetCaption"
+          />
+          <p v-else class="small mb-0">
+            Add expenses on <RouterLink to="/budgets">Budgets</RouterLink> to see the mix.
+          </p>
+        </CollapsibleSection>
+      </div>
+
+      <div class="col-12">
+        <CollapsibleSection
+          class="dashboard-panel"
+          title="Budget overview"
+          :meta="activeBudget ? formatMoney(monthlyIncome) + ' effective income' : undefined"
+          storage-key="dashboard-budget-overview"
+        >
+          <p v-if="!activeBudget" class="mb-0">
+            Create a budget to see your allocation and expenses here.
+          </p>
+          <LoadingView v-else-if="loading" message="Loading budget details…" />
+          <template v-else>
+            <p v-if="monthIncomeBoost > 0" class="small mb-3">
+              Includes {{ formatMoney(monthIncomeBoost) }} extra from
+              <RouterLink to="/extra-income">Extra income</RouterLink>
+            </p>
+
+            <div class="budget-stat-grid mb-3">
+                  <div class="budget-stat">
+                    <div class="budget-stat__label">Planned</div>
+                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalPlanned) }}</div>
+                  </div>
+                  <div class="budget-stat">
+                    <div class="budget-stat__label">Unexpected</div>
+                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalUnexpected) }}</div>
+                  </div>
+                  <div class="budget-stat">
+                    <div class="budget-stat__label">Goal savings</div>
+                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalGoalSavings) }}</div>
+                  </div>
+                  <div class="budget-stat">
+                    <div class="budget-stat__label">Combined</div>
+                    <div class="budget-stat__value">
+                      {{
+                        formatMoney(
+                          plannedBarResult.totalPlanned +
+                            plannedBarResult.totalUnexpected +
+                            plannedBarResult.totalGoalSavings,
+                        )
+                      }}
+                    </div>
+                    <div class="budget-stat__pct">{{ totalPercent.toFixed(1) }}% of income</div>
+                  </div>
+                </div>
+
+                <PlannedExpenseCategoryBar
+                  :category-parts="plannedBarResult.categoryParts"
+                  :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
+                  empty-hint="Add planned lines, unexpected expenses, or goal savings to see your budget mix here."
+                />
+          </template>
+        </CollapsibleSection>
+      </div>
+
+      <div class="col-12">
+        <CollapsibleSection
+          title="Top goals"
+          meta="Up to three dashboard goals by priority"
+          :default-expanded="false"
+          storage-key="dashboard-top-goals"
+          :card="true"
+        >
+          <div class="d-flex flex-wrap justify-content-end mb-3">
+            <RouterLink to="/goals" class="btn btn-sm btn-outline-primary">
               Manage goals
             </RouterLink>
           </div>
-          <div class="card-body pt-3">
-            <p v-if="!activeGoals.length" class="dashboard-goals-empty small mb-0">
-              No goals yet.
-              <RouterLink to="/goals" class="dashboard-goals-link">Create a goal</RouterLink>
-              so your biggest targets stay on the overview.
-            </p>
-            <div v-else class="dashboard-goals-grid">
+          <p v-if="!activeGoals.length" class="dashboard-goals-empty small mb-0">
+            No goals yet.
+            <RouterLink to="/goals" class="dashboard-goals-link">Create a goal</RouterLink>
+            so your biggest targets stay on the overview.
+          </p>
+          <div v-else class="dashboard-goals-grid">
               <article
                 v-for="g in activeGoals"
                 :key="g.id"
@@ -408,15 +429,17 @@ function activityKindDetail(tx: Transaction): string | null {
                 </div>
               </article>
             </div>
-          </div>
-        </section>
+        </CollapsibleSection>
       </div>
 
       <div class="col-12">
-        <div class="card h-100 dashboard-section-activity">
-          <div class="card-body">
-            <h3 class="h5 card-title mb-3">Recent activity</h3>
-            <p v-if="!recentTransactions.length" class="small text-muted mb-0">
+        <CollapsibleSection
+          title="Recent activity"
+          :meta="recentTransactions.length ? `${recentTransactions.length} recent` : 'No activity yet'"
+          :default-expanded="false"
+          storage-key="dashboard-recent-activity"
+        >
+            <p v-if="!recentTransactions.length" class="small mb-0">
               No recent transactions yet. Import CSV or add activity to see it here.
             </p>
             <ul v-else class="list-unstyled mb-0 dashboard-activity-list">
@@ -450,8 +473,7 @@ function activityKindDetail(tx: Transaction): string | null {
                 </div>
               </li>
             </ul>
-          </div>
-        </div>
+        </CollapsibleSection>
       </div>
     </div>
   </div>

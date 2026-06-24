@@ -295,7 +295,7 @@ async function submitProfile() {
 
     <div class="row g-3 mt-3">
       <div class="col-12">
-        <section class="card h-100">
+        <section class="card page-section-card h-100">
           <div class="card-body">
             <h3 class="h5 card-title mb-3">Data &amp; sync</h3>
             <p class="small text-muted mb-3">
@@ -398,7 +398,7 @@ async function submitProfile() {
 
     <div class="row g-3 mt-3">
       <div class="col-12">
-        <section class="card h-100">
+        <section class="card page-section-card h-100">
           <div class="card-body">
             <h3 class="h5 card-title mb-3">Appearance</h3>
             <div class="mb-3">

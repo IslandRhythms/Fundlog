@@ -8,6 +8,7 @@ import {
   computePlannedExpenseBarSegments,
   plannedAmountFromSub,
 } from '../shared/plannedExpenseBar';
+import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import {
   goalProgressPctWithBudget,
   monthlyPlanTowardGoal,
@@ -15,6 +16,8 @@ import {
 import { calendarMonthNow } from '../shared/calendarMonth';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import GoalsProgressBarChart from '../components/GoalsProgressBarChart.vue';
+import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
+import CollapsibleSection from '../components/CollapsibleSection.vue';
 import LoadingView from '../components/LoadingView.vue';
 import type {
   BudgetCategory,
@@ -214,6 +217,7 @@ const plannedBarResult = computed(() =>
     unexpectedTxs.value,
     goalContributionTxs.value,
     monthlyIncome.value,
+    calendarMonthNow(),
   ),
 );
 
@@ -226,15 +230,16 @@ const committedTotal = computed(
 
 const remainingHeadroom = computed(() => monthlyIncome.value - committedTotal.value);
 
-const fuelRingUsedPct = computed(() => {
-  const inc = monthlyIncome.value;
-  if (!inc || inc <= 0) return 0;
-  return Math.min(100, (committedTotal.value / inc) * 100);
-});
-
-const isOverCommitted = computed(
-  () => monthlyIncome.value > 0 && committedTotal.value > monthlyIncome.value,
+const headroom = computed(() =>
+  computeBudgetHeadroom(categories.value, plannedBarResult.value, monthlyIncome.value),
 );
+
+const monthLabel = computed(() => {
+  const ym = calendarMonthNow();
+  const [y, m] = ym.split('-');
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+});
 
 function formatMoney(amount: number, currencyCode: string) {
   const code = currencyCode?.trim() || 'USD';
@@ -608,132 +613,78 @@ async function submitRecordContribution() {
     </p>
 
     <template v-else>
-      <section class="goals-explainer card border shadow-none mb-4">
-        <div class="card-body py-3">
-          <h3 class="h6 goals-explainer-title mb-2">How this ties to your budget</h3>
-          <ul class="goals-explainer-list mb-0 small">
-            <li>
-              <strong>Income</strong> — your
-              <RouterLink to="/budgets">active budget</RouterLink>
-              base amount plus any
-              <RouterLink to="/extra-income">Extra income</RouterLink>
-              lines for <strong>this calendar month</strong>. Changing either updates the ring.
-            </li>
-            <li>
-              <strong>Committed</strong> — planned subcategories, unexpected expenses from
-              <RouterLink to="/expenses">Expenses</RouterLink>, and
-              <strong>Record savings</strong> below (goal-linked amounts, counted like the rest of the
-              plan). Adding any of these uses up headroom.
-            </li>
-            <li>
-              <strong>Goals below</strong> — progress adds up amounts you record with
-              <strong>Record savings</strong> on each goal (stored as transactions tied to that goal).
-              The pace line compares your deadline to this month’s headroom so you see if the budget has
-              room to hit the target.
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <section
-        v-if="activeBudget"
-        class="card border shadow-none mb-4 goals-budget-fuel-card"
+      <CollapsibleSection
+        class="mb-4"
+        title="How this ties to your budget"
+        meta="Income, commitments, and goal progress"
+        :default-expanded="false"
+        storage-key="goals-explainer"
       >
-        <div class="card-body py-3 py-md-4">
-          <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-            <div>
-              <h3 class="h5 mb-1 goals-budget-fuel-title">This month’s income & commitments</h3>
-              <p class="small text-muted mb-0">
-                <strong>{{ activeBudget.name }}</strong>
-                <span class="text-body-secondary"> · income vs. what your plan already commits</span>
-              </p>
-            </div>
-            <div class="d-flex flex-wrap gap-2 flex-shrink-0">
-              <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
-                Extra income
-              </RouterLink>
-              <RouterLink to="/budgets" class="btn btn-sm btn-outline-primary">
-                Edit budget
-              </RouterLink>
-            </div>
-          </div>
+        <ul class="goals-explainer-list mb-0 small">
+          <li>
+            <strong>Income</strong> — your
+            <RouterLink to="/budgets">active budget</RouterLink>
+            base amount plus any
+            <RouterLink to="/extra-income">Extra income</RouterLink>
+            lines for <strong>this calendar month</strong>.
+          </li>
+          <li>
+            <strong>Committed</strong> — planned subcategories, unexpected expenses from
+            <RouterLink to="/expenses">Expenses</RouterLink>, and
+            <strong>Record savings</strong> below.
+          </li>
+          <li>
+            <strong>Goals below</strong> — progress from amounts you record with
+            <strong>Record savings</strong> on each goal.
+          </li>
+        </ul>
+      </CollapsibleSection>
 
-          <LoadingView v-if="loadingBudget" message="Loading budget…" />
-          <template v-else>
-            <div v-if="!monthlyIncome" class="small text-muted mb-0">
-              Set a positive monthly income on this budget to see headroom and the ring.
-            </div>
-            <div v-else class="row g-4 align-items-center">
-              <div class="col-auto mx-auto mx-md-0">
-                <div
-                  class="goals-fuel-ring"
-                  :class="{ 'goals-fuel-ring--over': isOverCommitted }"
-                  :style="{ '--goals-ring-pct': fuelRingUsedPct + '%' }"
-                  role="img"
-                  :aria-label="`Committed ${fuelRingUsedPct.toFixed(0)} percent of monthly income`"
-                >
-                  <div class="goals-fuel-ring__hole">
-                    <span class="goals-fuel-ring__label">Left this month</span>
-                    <span
-                      class="goals-fuel-ring__value"
-                      :class="{
-                        'text-success': remainingHeadroom > 0,
-                        'text-danger': remainingHeadroom < 0,
-                        'text-body-secondary': remainingHeadroom === 0,
-                      }"
-                    >
-                      {{ formatMoney(remainingHeadroom, currencyCode()) }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div class="col">
-                <dl class="row goals-fuel-stats small mb-2 mb-md-3">
-                  <div class="col-sm-4">
-                    <dt class="text-muted fw-normal mb-0">Income (this month)</dt>
-                    <dd class="mb-0 fw-semibold">
-                      {{ formatMoney(monthlyIncome, currencyCode()) }}
-                    </dd>
-                  </div>
-                  <div class="col-sm-4">
-                    <dt class="text-muted fw-normal mb-0">Committed</dt>
-                    <dd class="mb-0 fw-semibold">
-                      {{ formatMoney(committedTotal, currencyCode()) }}
-                    </dd>
-                  </div>
-                  <div class="col-sm-4">
-                    <dt class="text-muted fw-normal mb-0">Headroom</dt>
-                    <dd
-                      class="mb-0 fw-semibold"
-                      :class="{
-                        'text-success': remainingHeadroom > 0,
-                        'text-danger': remainingHeadroom < 0,
-                      }"
-                    >
-                      {{ formatMoney(remainingHeadroom, currencyCode()) }}
-                    </dd>
-                  </div>
-                </dl>
-                <p v-if="monthIncomeBoost > 0" class="small text-muted mb-2">
-                  Includes {{ formatMoney(monthIncomeBoost, currencyCode()) }} from
-                  <RouterLink to="/extra-income">Extra income</RouterLink>
-                  · base budget {{ formatMoney(baseMonthlyIncome, currencyCode()) }}
-                </p>
-                <p v-if="isOverCommitted" class="small text-danger mb-2">
-                  You are committed above income this month. Goals have no positive headroom until you
-                  trim the plan, raise income, or move spending.
-                </p>
-                <PlannedExpenseCategoryBar
-                  :category-parts="plannedBarResult.categoryParts"
-                  :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-                  empty-hint="Add planned lines on Budgets, log unexpected expenses, or record goal savings to see the split."
-                  aria-label="Committed spending by category as a share of income"
-                />
-              </div>
-            </div>
-          </template>
+      <template v-if="activeBudget">
+        <div class="d-flex flex-wrap justify-content-end gap-2 mb-3">
+          <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+            Extra income
+          </RouterLink>
+          <RouterLink to="/budgets" class="btn btn-sm btn-outline-primary">
+            Edit budget
+          </RouterLink>
         </div>
-      </section>
+        <LoadingView v-if="loadingBudget" message="Loading budget…" />
+        <template v-else-if="monthlyIncome">
+          <CollapsibleSection
+            class="mb-3"
+            title="What's left"
+            :meta="headroom.spendingTiers.memorableLine ?? `${activeBudget.name} · ${monthLabel}`"
+            storage-key="goals-money-left"
+            integrated
+          >
+            <MoneyLeftSummary
+              embedded
+              variant="snapshot"
+              :headroom="headroom"
+              :currency-code="currencyCode()"
+              :month-label="monthLabel"
+            />
+          </CollapsibleSection>
+          <CollapsibleSection
+            class="mb-4"
+            title="Committed by category"
+            meta="Planned, unexpected, and savings split"
+            :default-expanded="false"
+            storage-key="goals-committed-bar"
+          >
+            <PlannedExpenseCategoryBar
+              :category-parts="plannedBarResult.categoryParts"
+              :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
+              empty-hint="Add planned lines on Budgets, log unexpected expenses, or record goal savings to see the split."
+              aria-label="Committed spending by category as a share of income"
+            />
+          </CollapsibleSection>
+        </template>
+        <p v-else class="small mb-4">
+          Set a positive monthly income on this budget to see what’s left.
+        </p>
+      </template>
 
       <p v-else class="status-text mb-4">
         Create a budget in
@@ -741,18 +692,17 @@ async function submitRecordContribution() {
         to see monthly headroom next to your goals. You can still add goals below.
       </p>
 
-      <section
+      <CollapsibleSection
         v-if="goals.length"
-        class="card border shadow-none mb-4 goals-progress-chart-card"
+        class="mb-4"
+        title="Progress toward each goal"
+        meta="Recorded savings plus linked budget lines"
+        :default-expanded="false"
+        storage-key="goals-progress-chart"
       >
-        <div class="card-body py-3">
-          <h3 class="h6 mb-2 goals-progress-chart-title">Progress toward each goal</h3>
-          <p class="small text-muted mb-2">
-            Bar length matches the list below: <strong>recorded savings</strong> plus, when you link
-            budget lines in <strong>Edit goal</strong>, up to this month’s planned amount from those
-            lines toward whatever is still needed to hit the target. It is
-            <strong>not</strong> the ring in <strong>This month’s income & commitments</strong>
-            above—that ring is <em>income vs commitments</em> for the month.
+          <p class="small mb-2">
+            Bar length matches the list below: <strong>recorded savings</strong> plus linked budget
+            lines toward what’s still needed.
           </p>
           <ul class="small text-muted mb-3 mb-md-2 ps-3">
             <li class="mb-1">
@@ -772,38 +722,28 @@ async function submitRecordContribution() {
             :segments="goalChartSegments"
             :currency-code="currencyCode()"
           />
-        </div>
-      </section>
+      </CollapsibleSection>
 
       <div class="row g-3">
         <div class="col-12">
-          <section class="card card-list stacked-section h-100 goals-panel border shadow-none">
-            <div class="card-body">
-              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                <div>
-                  <h3 class="h5 card-title mb-0">Your goals</h3>
-                  <p class="small text-muted mb-0 goals-panel-sub">
-                    Profile: <strong>{{ activeProfile?.name }}</strong>
-                    · {{ activeProfile?.currencyCode }} amounts
-                    ·
-                    <span class="text-body-secondary">{{ dashboardEligibleCount }} on Dashboard</span>
-                    (shows top 3 by priority). Use <strong>Edit goal</strong> to link budget lines so
-                    this month’s planned amounts can count toward the progress bar (up to the amount
-                    still needed).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-primary"
-                  data-bs-toggle="modal"
-                  data-bs-target="#createGoalModal"
-                  @click="openCreateGoalModal"
-                >
-                  Add goal
-                </button>
-              </div>
+          <CollapsibleSection
+            title="Your goals"
+            :meta="`${goals.length} goal${goals.length === 1 ? '' : 's'} · ${dashboardEligibleCount} on dashboard`"
+            storage-key="goals-list"
+          >
+            <div class="d-flex flex-wrap justify-content-end mb-3">
+              <button
+                type="button"
+                class="btn btn-sm btn-primary"
+                data-bs-toggle="modal"
+                data-bs-target="#createGoalModal"
+                @click="openCreateGoalModal"
+              >
+                Add goal
+              </button>
+            </div>
 
-              <div v-if="!goals.length" class="goals-empty-hint">
+            <div v-if="!goals.length" class="goals-empty-hint">
                 <p class="goals-empty-title">No goals yet</p>
                 <p class="goals-empty-muted mb-3">
                   Add one for anything you’re working toward—emergency fund, payoff, trip, or major
@@ -930,7 +870,7 @@ async function submitRecordContribution() {
                           :disabled="!activeBudget || isGoalTargetFullyFunded(g)"
                           :title="
                             !activeBudget
-                              ? 'Select an active budget on the Budgets page first'
+                              ? 'Select an active budget on Budget Records first'
                               : isGoalTargetFullyFunded(g)
                                 ? 'Target amount reached—edit the goal to raise the target if needed'
                                 : 'Log money you put toward this goal'
@@ -989,8 +929,7 @@ async function submitRecordContribution() {
                   </div>
                 </li>
               </ul>
-            </div>
-          </section>
+          </CollapsibleSection>
         </div>
       </div>
     </template>

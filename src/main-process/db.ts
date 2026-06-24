@@ -4,7 +4,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 7;
 
 let db: Database.Database | null = null;
 
@@ -308,6 +308,35 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
       )
       .run(5, now);
+  }
+
+  if (current < 6 && SCHEMA_VERSION >= 6) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      ALTER TABLE budget_subcategories ADD COLUMN spread_months INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE budget_subcategories ADD COLUMN spread_start_month TEXT;
+      ALTER TABLE transactions ADD COLUMN spread_months INTEGER NOT NULL DEFAULT 1;
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(6, now);
+  }
+
+  if (current < 7 && SCHEMA_VERSION >= 7) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      ALTER TABLE transactions ADD COLUMN entry_kind TEXT;
+      UPDATE transactions
+      SET entry_kind = 'unexpected'
+      WHERE source = 'manual' AND goal_id IS NULL AND entry_kind IS NULL;
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(7, now);
   }
 }
 

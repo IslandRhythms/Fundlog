@@ -3,81 +3,73 @@ import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import { useDomainStore } from '../stores/domain';
-import { hideBsModal } from '../shared/hideBsModal';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
+import CollapsibleSection from '../components/CollapsibleSection.vue';
+import BudgetPieCompare from '../components/BudgetPieCompare.vue';
+import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
 import {
   computePlannedExpenseBarSegments,
+  buildPieSegments,
   plannedAmountFromSub,
+  plannedTotalFromSub,
 } from '../shared/plannedExpenseBar';
+import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
+import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
 import { calendarMonthNow } from '../shared/calendarMonth';
-import type { BudgetCategory, BudgetSubcategory, Transaction } from '../shared/types';
+import { monthlyPortion, spreadMonthsLabel } from '../shared/monthSpread';
+import type { BudgetCategory, BudgetSubcategory, Profile, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
 const toast = useToast();
 
-const existingBudgetsExpanded = ref(true);
-
-const clearActivityMonth = ref('');
-const clearingMonth = ref(false);
-
-function openClearMonthModal() {
-  const d = new Date();
-  clearActivityMonth.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function toggleExistingBudgets() {
-  existingBudgetsExpanded.value = !existingBudgetsExpanded.value;
-}
-
-async function confirmClearMonthActivity() {
-  if (!activeBudget.value) return;
-  clearingMonth.value = true;
-  try {
-    const { deleted } = await window.fundlog.transaction.clearForBudgetMonth(
-      activeBudget.value.id,
-      clearActivityMonth.value,
-    );
-    await domain.loadTransactions();
-    await loadCategories();
-    toast.success(
-      deleted
-        ? `Removed ${deleted} transaction(s) for ${clearActivityMonth.value}.`
-        : `No transactions found for ${clearActivityMonth.value}.`,
-    );
-    hideBsModal('clearMonthModal');
-  } catch (e) {
-    console.error(e);
-    toast.error('Could not clear activity for that month.');
-  } finally {
-    clearingMonth.value = false;
-  }
-}
-const name = ref('');
-const startMonth = ref('');
-const monthlyIncome = ref<number | null>(null);
-const ruleSet = ref<'fiftyThirtyTwenty' | 'custom'>('fiftyThirtyTwenty');
+const viewingMonth = calendarMonthNow();
 
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
+const purchaseTxs = ref<Transaction[]>([]);
 const goalContributionTxs = ref<Transaction[]>([]);
 const editingCategoryId = ref<number | null>(null);
+const categoryPanelExpanded = ref<Record<number, boolean>>({});
+const editingSubId = ref<number | null>(null);
+const loggingPurchaseSubId = ref<number | null>(null);
+const purchaseAmount = ref<number | null>(null);
+const purchaseLabel = ref('');
+const purchaseSpreadMonths = ref(1);
 const newLabel = ref('');
 const newType = ref<'fixed' | 'variable'>('fixed');
 const newTargetPercent = ref<number | null>(null);
 const newTargetAmount = ref<number | null>(null);
 const newMinAmount = ref<number | null>(null);
 const newMaxAmount = ref<number | null>(null);
+const newSpreadMonths = ref(1);
+const newSpreadStartMonth = ref(viewingMonth);
+
+const activeProfile = computed<Profile | null>(() => {
+  const id = domain.activeProfileId;
+  if (!id) return null;
+  return domain.profiles.find((p) => p.id === id) ?? null;
+});
+
+function currencyCode() {
+  return activeProfile.value?.currencyCode?.trim() || 'USD';
+}
+
+function formatMoney(amount: number) {
+  return formatMoneyExact(amount, currencyCode());
+}
+
+const monthLabel = computed(() => {
+  const [y, m] = viewingMonth.split('-');
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+});
 
 onMounted(async () => {
   await domain.loadProfiles();
   await domain.loadBudgets();
   await loadCategories();
 });
-
-const budgets = computed(() =>
-  [...domain.budgets].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-);
 
 const activeBudget = computed(() => domain.activeBudget);
 
@@ -93,35 +85,17 @@ const monthIncomeBoost = computed(() => {
   return domain.incomeBoostSumForBudgetMonth(b.id, calendarMonthNow());
 });
 
-function formatFiftyThirtyTwentyAmount(income: number, percent: number) {
-  const value = (income * percent) / 100;
-  return value.toLocaleString();
-}
-
-async function submit() {
-  if (!name.value || !startMonth.value || !monthlyIncome.value) return;
-  const ok = await domain.createBudget({
-    name: name.value.trim(),
-    startMonth: startMonth.value,
-    monthlyIncome: monthlyIncome.value,
-    ruleSet: ruleSet.value,
-  });
-  if (!ok) return;
-  name.value = '';
-  startMonth.value = '';
-  monthlyIncome.value = null;
-  ruleSet.value = 'fiftyThirtyTwenty';
-  await loadCategories();
-  hideBsModal('createBudgetModal');
-}
-
 async function loadCategories() {
   if (!activeBudget.value || !domain.activeProfileId) return;
   const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
   categories.value = result.categories;
   subcategories.value = result.subcategories;
-  const [unexpected, goalContrib] = await Promise.all([
+  const [unexpected, purchases, goalContrib] = await Promise.all([
     window.fundlog.transaction.listUnexpected(
+      domain.activeProfileId,
+      activeBudget.value.id,
+    ),
+    window.fundlog.transaction.listPurchases(
       domain.activeProfileId,
       activeBudget.value.id,
     ),
@@ -131,7 +105,9 @@ async function loadCategories() {
     ),
   ]);
   unexpectedTxs.value = unexpected;
+  purchaseTxs.value = purchases;
   goalContributionTxs.value = goalContrib;
+  loadCategoryPanelStates();
 }
 
 const groupedSubcategories = computed(() => {
@@ -144,15 +120,69 @@ const groupedSubcategories = computed(() => {
   return grouped;
 });
 
-const plannedAmount = plannedAmountFromSub;
-
 const percentOfBudget = (sub: BudgetSubcategory) => {
   if (!activeBudget.value || !planningMonthIncome.value) return 0;
   const income = planningMonthIncome.value;
-  const amt = plannedAmount(sub);
+  const amt = plannedAmountFromSub(sub, viewingMonth);
   if (!amt) return 0;
   return Math.min(100, (amt / income) * 100);
 };
+
+function categoryBucketFor(cat: BudgetCategory) {
+  return headroom.value.buckets.find((b) => b.ruleKey === cat.ruleKey);
+}
+
+function categoryPanelStorageKey(catId: number) {
+  return `fundlog-collapse:budgets-cat-${catId}`;
+}
+
+function isCategoryPanelExpanded(catId: number) {
+  return categoryPanelExpanded.value[catId] === true;
+}
+
+function loadCategoryPanelStates() {
+  const next: Record<number, boolean> = { ...categoryPanelExpanded.value };
+  for (const cat of categories.value) {
+    try {
+      const stored = localStorage.getItem(categoryPanelStorageKey(cat.id));
+      if (stored === '0') next[cat.id] = false;
+      else if (stored === '1') next[cat.id] = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  categoryPanelExpanded.value = next;
+}
+
+function toggleCategoryPanel(catId: number) {
+  const next = !isCategoryPanelExpanded(catId);
+  categoryPanelExpanded.value = { ...categoryPanelExpanded.value, [catId]: next };
+  try {
+    localStorage.setItem(categoryPanelStorageKey(catId), next ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+
+function ensureCategoryPanelExpanded(catId: number) {
+  if (isCategoryPanelExpanded(catId)) return;
+  categoryPanelExpanded.value = { ...categoryPanelExpanded.value, [catId]: true };
+  try {
+    localStorage.setItem(categoryPanelStorageKey(catId), '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+function categoryLineCount(catId: number) {
+  return (groupedSubcategories.value[catId] || []).length;
+}
+
+function categoryUsedPct(cat: BudgetCategory) {
+  const bucket = categoryBucketFor(cat);
+  if (!bucket || bucket.targetAmount <= 0) return 0;
+  return Math.min(100, (bucket.committed / bucket.targetAmount) * 100);
+}
 
 const plannedBarResult = computed(() =>
   computePlannedExpenseBarSegments(
@@ -162,8 +192,24 @@ const plannedBarResult = computed(() =>
     unexpectedTxs.value,
     goalContributionTxs.value,
     planningMonthIncome.value,
+    viewingMonth,
   ),
 );
+
+const headroom = computed(() =>
+  computeBudgetHeadroom(categories.value, plannedBarResult.value, planningMonthIncome.value),
+);
+
+const pieSegments = computed(() =>
+  buildPieSegments(plannedBarResult.value, planningMonthIncome.value),
+);
+
+const allocationTargetCaption = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return '';
+  if (b.ruleSet === 'fiftyThirtyTwenty') return '50 / 30 / 20 rule targets';
+  return 'Custom category targets';
+});
 
 const totalPlanned = computed(() => plannedBarResult.value.totalPlanned);
 
@@ -174,18 +220,149 @@ const totalPercent = computed(() => {
   return plannedBarResult.value.combinedOfIncomePct;
 });
 
-function startAddFor(categoryId: number) {
-  editingCategoryId.value = categoryId;
+function resetSubForm() {
   newLabel.value = '';
   newType.value = 'fixed';
   newTargetPercent.value = null;
   newTargetAmount.value = null;
   newMinAmount.value = null;
   newMaxAmount.value = null;
+  newSpreadMonths.value = 1;
+  newSpreadStartMonth.value = viewingMonth;
+}
+
+function cancelSubForm() {
+  editingCategoryId.value = null;
+  editingSubId.value = null;
+  loggingPurchaseSubId.value = null;
+  purchaseAmount.value = null;
+  purchaseLabel.value = '';
+  purchaseSpreadMonths.value = 1;
+  resetSubForm();
+}
+
+function startLogPurchase(sub: BudgetSubcategory) {
+  if (sub.parentCategoryId != null) ensureCategoryPanelExpanded(sub.parentCategoryId);
+  cancelSubForm();
+  loggingPurchaseSubId.value = sub.id;
+  purchaseLabel.value = sub.label;
+}
+
+async function submitPurchase(sub: BudgetSubcategory) {
+  if (!activeBudget.value || !domain.activeProfileId || !purchaseAmount.value) return;
+  const now = new Date();
+  try {
+    await window.fundlog.transaction.createManual({
+      profileId: domain.activeProfileId,
+      budgetId: activeBudget.value.id,
+      subcategoryId: sub.id,
+      date: now.toISOString().slice(0, 10),
+      amount: purchaseAmount.value,
+      description: purchaseLabel.value.trim() || sub.label,
+      spreadMonths: Math.max(1, Math.floor(purchaseSpreadMonths.value || 1)),
+      entryKind: 'purchase',
+    });
+    cancelSubForm();
+    await loadCategories();
+    toast.success('Purchase logged.');
+  } catch (e) {
+    console.error(e);
+    toast.error('Could not log purchase.');
+  }
+}
+
+function startAddFor(categoryId: number) {
+  ensureCategoryPanelExpanded(categoryId);
+  cancelSubForm();
+  editingCategoryId.value = categoryId;
+}
+
+function startEditSub(sub: BudgetSubcategory) {
+  if (sub.parentCategoryId != null) ensureCategoryPanelExpanded(sub.parentCategoryId);
+  loggingPurchaseSubId.value = null;
+  editingCategoryId.value = null;
+  editingSubId.value = sub.id;
+  newLabel.value = sub.label;
+  newType.value = sub.isFlexible ? 'variable' : 'fixed';
+  newTargetPercent.value = sub.targetPercent;
+  newTargetAmount.value = sub.targetAmount;
+  newMinAmount.value = sub.minAmount ?? null;
+  newMaxAmount.value = sub.maxAmount ?? null;
+  newSpreadMonths.value = Math.max(1, sub.spreadMonths ?? 1);
+  newSpreadStartMonth.value = sub.spreadStartMonth ?? viewingMonth;
+}
+
+async function submitEditSubcategory(category: BudgetCategory) {
+  if (!activeBudget.value || !editingSubId.value || !newLabel.value.trim()) return;
+  const spreadMonths = Math.max(1, Math.floor(newSpreadMonths.value || 1));
+  const result = await window.fundlog.subcategory.update({
+    id: editingSubId.value,
+    budgetId: activeBudget.value.id,
+    label: newLabel.value.trim(),
+    targetPercent: newTargetPercent.value,
+    targetAmount: newType.value === 'fixed' ? newTargetAmount.value : null,
+    minAmount: newType.value === 'variable' ? newMinAmount.value : null,
+    maxAmount: newType.value === 'variable' ? newMaxAmount.value : null,
+    isFlexible: newType.value === 'variable',
+    spreadMonths,
+    spreadStartMonth: spreadMonths > 1 ? newSpreadStartMonth.value : null,
+  });
+  categories.value = result.categories;
+  subcategories.value = result.subcategories;
+  cancelSubForm();
+}
+
+async function deleteSubcategoryItem(sub: BudgetSubcategory) {
+  if (!activeBudget.value) return;
+  if (!window.confirm(`Remove "${sub.label}" from this budget?`)) return;
+  const result = await window.fundlog.subcategory.delete({
+    id: sub.id,
+    budgetId: activeBudget.value.id,
+  });
+  categories.value = result.categories;
+  subcategories.value = result.subcategories;
+  if (editingSubId.value === sub.id) cancelSubForm();
+}
+
+function subSpreadHint(sub: BudgetSubcategory): string | null {
+  const spread = Math.max(1, sub.spreadMonths ?? 1);
+  if (spread <= 1) return null;
+  const total = plannedTotalFromSub(sub);
+  const monthly = plannedAmountFromSub(sub, viewingMonth);
+  if (monthly <= 0) {
+    return `${formatMoney(total)} over ${spreadMonthsLabel(spread)} (not active this month)`;
+  }
+  return `${formatMoney(total)} over ${spreadMonthsLabel(spread)} → ${formatMoney(monthly)}/mo`;
+}
+
+function lineItemPlannedPrimary(sub: BudgetSubcategory): string {
+  if (sub.isFlexible) {
+    const min = sub.minAmount ?? 0;
+    const max = sub.maxAmount ?? min;
+    return `${formatMoney(min)} – ${formatMoney(max)}`;
+  }
+  return formatMoney(plannedAmountFromSub(sub, viewingMonth));
+}
+
+function lineItemPlannedSuffix(sub: BudgetSubcategory): string {
+  return sub.isFlexible ? '/mo range' : '/mo';
+}
+
+function lineItemPlannedNote(sub: BudgetSubcategory): string | null {
+  if (sub.isFlexible) return null;
+  return subSpreadHint(sub);
+}
+
+function previewMonthlyFromForm(): number | null {
+  if (newType.value === 'fixed' && newTargetAmount.value != null && newTargetAmount.value > 0) {
+    return monthlyPortion(newTargetAmount.value, newSpreadMonths.value);
+  }
+  return null;
 }
 
 async function submitSubcategory(category: BudgetCategory) {
   if (!activeBudget.value || !newLabel.value.trim()) return;
+  const spreadMonths = Math.max(1, Math.floor(newSpreadMonths.value || 1));
   const result = await window.fundlog.subcategory.create({
     budgetId: activeBudget.value.id,
     parentCategoryId: category.id,
@@ -195,536 +372,649 @@ async function submitSubcategory(category: BudgetCategory) {
     minAmount: newType.value === 'variable' ? newMinAmount.value : null,
     maxAmount: newType.value === 'variable' ? newMaxAmount.value : null,
     isFlexible: newType.value === 'variable',
+    spreadMonths,
+    spreadStartMonth: spreadMonths > 1 ? newSpreadStartMonth.value : null,
   });
   categories.value = result.categories;
   subcategories.value = result.subcategories;
-  editingCategoryId.value = null;
-}
-
-async function updateCategoryColor(cat: BudgetCategory, color: string) {
-  if (!activeBudget.value) return;
-  const result = await window.fundlog.category.updateColor({
-    id: cat.id,
-    color,
-    budgetId: activeBudget.value.id,
-  });
-  categories.value = result.categories;
-  subcategories.value = result.subcategories;
+  cancelSubForm();
 }
 </script>
 
 <template>
-  <div class="view budgets-view container-fluid">
-    <h2 class="mb-2">Budgets</h2>
-    <p class="view-subtitle mb-4">
-      Create separate budgets and choose the 50/30/20 rule or a custom structure.
-    </p>
+  <div class="view view-budgets budgets-view container-fluid">
+    <header class="budgets-page-header">
+      <p class="view-page-eyebrow">Planning</p>
+      <h2>Budgets</h2>
+      <p class="view-subtitle budgets-page-header__lede">
+        Build your plan, spread costs over months, and tune line items by category.
+      </p>
+      <p v-if="!activeBudget" class="status-text budgets-page-header__status">
+        Create a budget on
+        <RouterLink to="/budget-records">Budget Records</RouterLink>
+        to start planning.
+      </p>
+      <p v-else class="budgets-page-header__meta">
+        Planning <strong>{{ activeBudget.name }}</strong>
+        <span class="budgets-existing-dot" aria-hidden="true">·</span>
+        <RouterLink to="/budget-records">Manage budgets</RouterLink>
+      </p>
+    </header>
 
-    <div class="budgets-toolbar d-flex flex-wrap align-items-center gap-2 mb-3">
-      <button
-        type="button"
-        class="btn btn-primary"
-        data-bs-toggle="modal"
-        data-bs-target="#createBudgetModal"
-      >
-        New budget
-      </button>
-      <button
-        v-if="activeBudget"
-        type="button"
-        class="btn btn-outline-warning"
-        data-bs-toggle="modal"
-        data-bs-target="#clearMonthModal"
-        @click="openClearMonthModal"
-      >
-        Start clean month…
-      </button>
-      <RouterLink
-        v-if="activeBudget"
-        to="/extra-income"
-        class="btn btn-outline-secondary"
-      >
-        Extra income
-      </RouterLink>
-    </div>
+    <div v-if="activeBudget" class="row g-3">
+      <div class="col-12">
+        <CollapsibleSection
+          title="What's left"
+          :meta="headroom.spendingTiers.memorableLine ?? monthLabel"
+          storage-key="budgets-money-left"
+          integrated
+        >
+          <MoneyLeftSummary
+            embedded
+            variant="planning"
+            :headroom="headroom"
+            :currency-code="currencyCode()"
+            :month-label="monthLabel"
+          />
+        </CollapsibleSection>
+      </div>
 
-    <section class="card budgets-existing-card stacked-section mb-3">
-      <button
-        type="button"
-        class="budgets-existing-toggle"
-        :class="{ 'budgets-existing-toggle--expanded': existingBudgetsExpanded }"
-        :aria-expanded="existingBudgetsExpanded"
-        aria-controls="existingBudgetsPanel"
-        id="existingBudgetsToggle"
-        @click="toggleExistingBudgets"
-      >
-        <div class="budgets-existing-toggle-main">
-          <span class="budgets-existing-toggle-icon" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-            </svg>
-          </span>
-          <div class="budgets-existing-toggle-text">
-            <span class="budgets-existing-toggle-title">Your budgets</span>
-            <span class="budgets-existing-toggle-meta">
-              {{ budgets.length === 0 ? 'None yet' : `${budgets.length} saved` }}
-            </span>
+      <div class="col-12">
+        <CollapsibleSection
+          class="budgets-planning-panel"
+          title="Income allocation"
+          :meta="`Compare plan vs target · ${monthLabel}`"
+          :default-expanded="false"
+          storage-key="budgets-allocation-compare"
+        >
+          <BudgetPieCompare
+            v-if="categories.length"
+            :categories="categories"
+            :actual-segments="pieSegments"
+            :income="planningMonthIncome"
+            :currency-code="currencyCode()"
+            actual-caption="Planned, unexpected, and goal savings"
+            :target-caption="allocationTargetCaption"
+          />
+          <p v-else class="small mb-0">
+            Add expenses to see your spending mix.
+          </p>
+        </CollapsibleSection>
+      </div>
+
+      <div class="col-12">
+        <CollapsibleSection
+          class="budgets-planning-panel"
+          :title="`${activeBudget.name} · ${monthLabel}`"
+          :meta="`Effective income ${formatMoney(planningMonthIncome)}`"
+          storage-key="budgets-month-overview"
+        >
+          <div class="d-flex flex-wrap justify-content-end mb-3">
+            <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+              Extra income
+            </RouterLink>
           </div>
-        </div>
-        <span
-          class="budgets-collapse-chevron"
-          :class="{ 'budgets-collapse-chevron--collapsed': !existingBudgetsExpanded }"
-          aria-hidden="true"
-        />
-      </button>
 
-      <div
-        v-show="existingBudgetsExpanded"
-        id="existingBudgetsPanel"
-        class="budgets-existing-panel"
-        role="region"
-        aria-labelledby="existingBudgetsToggle"
-      >
-        <div class="card-body budgets-existing-body">
-          <div v-if="budgets.length === 0" class="budgets-existing-empty">
-            <p class="budgets-existing-empty-title mb-1">No budgets yet</p>
-            <p class="budgets-existing-empty-text mb-0">
-              Use <strong>New budget</strong> above to create your first one.
-            </p>
-          </div>
-          <ul v-else class="list-unstyled mb-0 budgets-existing-list">
-            <li v-for="b in budgets" :key="b.id" class="budgets-existing-row">
-              <div class="budgets-existing-row-inner">
-                <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
-                  <span class="budgets-existing-name">{{ b.name }}</span>
-                  <span v-if="b.isActive" class="badge bg-success">Active</span>
+          <div class="budget-stat-grid mb-3">
+              <div class="budget-stat">
+                <div class="budget-stat__label">Planned</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalPlanned) }}
                 </div>
-                <div class="budgets-existing-details">
-                  <span>From {{ b.startMonth }}</span>
-                  <span class="budgets-existing-dot" aria-hidden="true">·</span>
-                  <span>Income {{ b.monthlyIncome.toLocaleString() }}</span>
-                  <template v-if="b.ruleSet === 'fiftyThirtyTwenty'">
-                    <span class="budgets-existing-dot" aria-hidden="true">·</span>
-                    <span>
-                      50 / 30 / 20
-                      ({{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 50) }} /
-                      {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 30) }} /
-                      {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 20) }})
-                    </span>
-                  </template>
-                  <template v-else>
-                    <span class="budgets-existing-dot" aria-hidden="true">·</span>
-                    <span>Custom</span>
-                  </template>
+                <div v-if="planningMonthIncome" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalPlanned / planningMonthIncome) * 100)
+                  }}% of income
                 </div>
               </div>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </section>
+              <div class="budget-stat">
+                <div class="budget-stat__label">Unexpected</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalUnexpected) }}
+                </div>
+                <div v-if="planningMonthIncome && plannedBarResult.totalUnexpected" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalUnexpected / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+              <div class="budget-stat">
+                <div class="budget-stat__label">Goal savings</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalGoalSavings) }}
+                </div>
+                <div v-if="planningMonthIncome && plannedBarResult.totalGoalSavings" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalGoalSavings / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+              <div class="budget-stat">
+                <div class="budget-stat__label">Combined</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(headroom.committedTotal) }}
+                </div>
+                <div class="budget-stat__pct">{{ formatPercent(totalPercent) }}% of income</div>
+              </div>
+            </div>
 
-    <div v-if="activeBudget" class="row g-3 mt-3">
-      <div class="col-12">
-        <section class="card">
-          <div class="card-body">
-            <h3 class="h5 card-title mb-2">
-              Planned expenses for {{ activeBudget.name }}
-            </h3>
-            <p class="small text-muted mb-2">
-              Configure fixed and variable expenses within each category. Unexpected expenses from
-              the Expenses page and goal savings from
-              <RouterLink to="/goals">Goals</RouterLink>
-              (Record savings) roll into the bar—goal amounts map to your savings/debt category when
-              possible. Percentages use
-              <strong>this calendar month’s</strong> effective income (budget base plus
-              <RouterLink to="/extra-income">Extra income</RouterLink>
-              for the month).
-            </p>
-            <p v-if="monthIncomeBoost > 0" class="small text-muted mb-2">
-              This month: base {{ activeBudget.monthlyIncome.toLocaleString() }} +
-              {{ monthIncomeBoost.toLocaleString() }} extra =
-              <strong>{{ planningMonthIncome.toLocaleString() }}</strong>
-              effective.
-            </p>
-            <div class="mb-1 d-flex flex-wrap justify-content-between gap-2 small">
-              <span>Planned line items</span>
-              <span>
-                {{ plannedBarResult.totalPlanned.toLocaleString() }}
-                <span v-if="planningMonthIncome" class="text-muted">
-                  ({{
-                    (
-                      (plannedBarResult.totalPlanned / planningMonthIncome) *
-                      100
-                    ).toFixed(1)
-                  }}% of income)
-                </span>
-              </span>
-            </div>
-            <div class="mb-2 d-flex flex-wrap justify-content-between gap-2 small">
-              <span>Unexpected (manual)</span>
-              <span>
-                {{ plannedBarResult.totalUnexpected.toLocaleString() }}
-                <span
-                  v-if="planningMonthIncome && plannedBarResult.totalUnexpected"
-                  class="text-muted"
-                >
-                  ({{
-                    (
-                      (plannedBarResult.totalUnexpected / planningMonthIncome) *
-                      100
-                    ).toFixed(1)
-                  }}% of income)
-                </span>
-              </span>
-            </div>
-            <div class="mb-2 d-flex flex-wrap justify-content-between gap-2 small">
-              <span>Goal savings (Record savings)</span>
-              <span>
-                {{ plannedBarResult.totalGoalSavings.toLocaleString() }}
-                <span
-                  v-if="planningMonthIncome && plannedBarResult.totalGoalSavings"
-                  class="text-muted"
-                >
-                  ({{
-                    (
-                      (plannedBarResult.totalGoalSavings / planningMonthIncome) *
-                      100
-                    ).toFixed(1)
-                  }}% of income)
-                </span>
-              </span>
-            </div>
-            <div class="mb-1 d-flex flex-wrap justify-content-between gap-2 small fw-semibold">
-              <span>Combined</span>
-              <span>
-                {{
-                  (
-                    plannedBarResult.totalPlanned +
-                    plannedBarResult.totalUnexpected +
-                    plannedBarResult.totalGoalSavings
-                  ).toLocaleString()
-                }}
-                ({{ totalPercent.toFixed(1) }}% of income)
-              </span>
-            </div>
             <PlannedExpenseCategoryBar
               :category-parts="plannedBarResult.categoryParts"
               :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-              empty-hint="Add planned amounts, unexpected expenses, or goal savings to see spending by category on one bar."
+              empty-hint="Add planned amounts, unexpected expenses, or goal savings to see spending by category."
             />
-          </div>
-        </section>
+            <p class="small mt-3 mb-0">
+              Unexpected expenses from
+              <RouterLink to="/expenses">Expenses</RouterLink>
+              and goal savings from
+              <RouterLink to="/goals">Goals</RouterLink>
+              count toward this month when spread across months.
+            </p>
+        </CollapsibleSection>
       </div>
 
-      <div
-        v-for="cat in categories"
-        :key="cat.id"
-        class="col-lg-4"
-      >
-        <section class="card h-100">
-          <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h3 class="h6 card-title mb-0">
-                {{ cat.label }}
-              </h3>
-              <input
-                type="color"
-                class="form-control form-control-color form-control-sm"
-                :value="cat.color"
-                title="Pick category color"
-                @input="updateCategoryColor(cat, ($event.target as HTMLInputElement).value)"
-              />
-              <span class="badge rounded-pill bg-primary">
-                {{ cat.targetPercent }}%
-              </span>
-            </div>
-            <p class="small text-muted">
-              Allocate fixed and flexible expenses within this category.
-            </p>
-
-            <ul class="list-unstyled mt-3 mb-3">
-              <li
-                v-for="sub in groupedSubcategories[cat.id] || []"
-                :key="sub.id"
-                class="mb-2"
+      <div class="col-12">
+        <CollapsibleSection
+          title="Line items by category"
+          meta="Budget, committed, and left per category"
+          :default-expanded="false"
+          storage-key="budgets-line-items"
+        >
+          <p class="line-items-intro mb-2">
+            Each bucket shows budget health at a glance — expand a card to log purchases or edit
+            expenses. Unexpected spending goes on
+            <RouterLink to="/expenses">Expenses</RouterLink>.
+          </p>
+          <div class="budget-categories">
+              <section
+                v-for="cat in categories"
+                :key="cat.id"
+                class="budget-category-panel"
+                :class="{
+                  'budget-category-panel--over': (categoryBucketFor(cat)?.remaining ?? 0) < 0,
+                  'budget-category-panel--collapsed': !isCategoryPanelExpanded(cat.id),
+                }"
+                :style="{ '--category-accent': cat.color }"
               >
-                <div
-                  class="d-flex flex-column border rounded p-2 expense-item"
-                  :style="{ borderLeft: '4px solid ' + cat.color }"
-                >
-                  <div class="d-flex justify-content-between align-items-center mb-1">
-                    <span class="fw-semibold">{{ sub.label }}</span>
-                    <span class="badge bg-secondary">
-                      {{ sub.isFlexible ? 'Variable' : 'Fixed' }}
-                    </span>
-                  </div>
-                  <div class="small text-muted d-flex flex-wrap gap-2">
-                    <span v-if="sub.targetPercent != null">
-                      Target {{ sub.targetPercent }}%
-                    </span>
-                    <span v-if="!sub.isFlexible && sub.targetAmount != null">
-                      Fixed {{ sub.targetAmount.toLocaleString() }}
-                    </span>
-                    <span v-if="sub.isFlexible && (sub.minAmount != null || sub.maxAmount != null)">
-                      Range
-                      <template v-if="sub.minAmount != null">
-                        {{ sub.minAmount.toLocaleString() }}
-                      </template>
-                      –
-                      <template v-if="sub.maxAmount != null">
-                        {{ sub.maxAmount.toLocaleString() }}
-                      </template>
-                    </span>
-                  </div>
-                  <div class="mt-2">
-                    <div class="d-flex justify-content-between small mb-1">
-                      <span>
-                        {{ plannedAmount(sub).toLocaleString() }}
-                      </span>
-                      <span>{{ percentOfBudget(sub).toFixed(1) }}% of budget</span>
+                <header class="budget-category-panel__header">
+                  <button
+                    type="button"
+                    class="budget-category-panel__toggle"
+                    :aria-expanded="isCategoryPanelExpanded(cat.id)"
+                    :aria-controls="`budget-category-panel-${cat.id}`"
+                    @click="toggleCategoryPanel(cat.id)"
+                  >
+                    <div class="budget-category-panel__identity">
+                      <span class="budget-category-panel__swatch" aria-hidden="true" />
+                      <div class="budget-category-panel__titles">
+                        <h3 class="budget-category-panel__title">{{ cat.label }}</h3>
+                        <p class="budget-category-panel__target">
+                          {{ cat.targetPercent }}% income ·
+                          {{ categoryLineCount(cat.id) }}
+                          {{ categoryLineCount(cat.id) === 1 ? 'expense' : 'expenses' }}
+                        </p>
+                      </div>
                     </div>
-                    <div class="progress" style="height: 6px">
+                    <div
+                      class="budget-category-panel__hero"
+                      :class="{
+                        'budget-category-panel__hero--over':
+                          (categoryBucketFor(cat)?.remaining ?? 0) < 0,
+                      }"
+                    >
+                      <span class="budget-category-panel__hero-value">
+                        {{ formatMoney(categoryBucketFor(cat)?.remaining ?? 0) }}
+                      </span>
+                      <span class="budget-category-panel__hero-label">left</span>
+                    </div>
+                    <span
+                      class="budgets-collapse-chevron budget-category-panel__chevron"
+                      :class="{
+                        'budgets-collapse-chevron--collapsed': !isCategoryPanelExpanded(cat.id),
+                      }"
+                      aria-hidden="true"
+                    />
+                  </button>
+
+                  <div class="budget-category-panel__meter-wrap">
+                    <div
+                      class="budget-category-panel__meter"
+                      role="progressbar"
+                      :aria-valuenow="categoryUsedPct(cat)"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      :aria-label="`${cat.label} budget used`"
+                    >
                       <div
-                        class="progress-bar"
-                        role="progressbar"
-                        :style="{ width: percentOfBudget(sub) + '%' }"
-                        :aria-valuenow="percentOfBudget(sub)"
-                        aria-valuemin="0"
-                        aria-valuemax="100"
+                        class="budget-category-panel__meter-fill"
+                        :style="{
+                          width: categoryUsedPct(cat) + '%',
+                          backgroundColor: cat.color,
+                        }"
                       />
                     </div>
+                    <span class="budget-category-panel__meter-label">
+                      {{ formatPercent(categoryUsedPct(cat)) }}% used
+                    </span>
                   </div>
-                </div>
-              </li>
-              <li v-if="!(groupedSubcategories[cat.id] || []).length" class="small text-muted">
-                No subcategories yet. You can subdivide this bucket into specific expenses.
-              </li>
-            </ul>
 
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-primary w-100 mb-2"
-              @click="startAddFor(cat.id)"
-            >
-              Add expense / subcategory
-            </button>
+                  <div class="budget-category-panel__strip">
+                    <span>
+                      Budget
+                      <strong>{{ formatMoney(categoryBucketFor(cat)?.targetAmount ?? 0) }}</strong>
+                    </span>
+                    <span>
+                      Committed
+                      <strong>{{ formatMoney(categoryBucketFor(cat)?.committed ?? 0) }}</strong>
+                    </span>
+                  </div>
+                </header>
 
-            <form
-              v-if="editingCategoryId === cat.id"
-              class="row g-2 mt-1"
-              @submit.prevent="submitSubcategory(cat)"
-            >
-              <div class="col-12">
-                <label class="form-label mb-1">
-                  Name
-                  <input
-                    v-model="newLabel"
-                    type="text"
-                    class="form-control form-control-sm"
-                    placeholder="Rent, groceries, etc."
-                  />
-                </label>
-              </div>
-              <div class="col-6">
-                <label class="form-label mb-1">
-                  Type
-                  <select v-model="newType" class="form-select form-select-sm">
-                    <option value="fixed">Fixed</option>
-                    <option value="variable">Variable</option>
-                  </select>
-                </label>
-              </div>
-              <div class="col-6">
-                <label class="form-label mb-1">
-                  Target %
-                  <input
-                    v-model.number="newTargetPercent"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    class="form-control form-control-sm"
-                    placeholder="e.g. 10"
-                  />
-                </label>
-              </div>
-              <div class="col-12" v-if="newType === 'fixed'">
-                <label class="form-label mb-1">
-                  Amount
-                  <input
-                    v-model.number="newTargetAmount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    class="form-control form-control-sm"
-                    placeholder="e.g. 250"
-                  />
-                </label>
-              </div>
-              <div class="col-6" v-if="newType === 'variable'">
-                <label class="form-label mb-1">
-                  Min amount
-                  <input
-                    v-model.number="newMinAmount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    class="form-control form-control-sm"
-                    placeholder="e.g. 100"
-                  />
-                </label>
-              </div>
-              <div class="col-6" v-if="newType === 'variable'">
-                <label class="form-label mb-1">
-                  Max amount
-                  <input
-                    v-model.number="newMaxAmount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    class="form-control form-control-sm"
-                    placeholder="e.g. 300"
-                  />
-                </label>
-              </div>
-              <div class="col-12 d-flex justify-content-end gap-2">
+                <div
+                  v-show="isCategoryPanelExpanded(cat.id)"
+                  :id="`budget-category-panel-${cat.id}`"
+                  class="budget-category-panel__body"
+                >
+                  <div class="table-responsive budget-line-table-wrap">
+                    <table class="table budget-line-table align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th scope="col" class="budget-line-table__th-expense">Expense</th>
+                          <th scope="col" class="text-end budget-line-table__th-num">Planned / mo</th>
+                          <th scope="col" class="text-end budget-line-table__th-num">% income</th>
+                          <th scope="col" class="text-end budget-line-table__th-actions">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template
+                          v-for="sub in groupedSubcategories[cat.id] || []"
+                          :key="sub.id"
+                        >
+                          <tr
+                            v-if="editingSubId !== sub.id && loggingPurchaseSubId !== sub.id"
+                            class="budget-line-row"
+                          >
+                            <td class="budget-line-row__expense">
+                              <div class="budget-line-row__top">
+                                <span class="budget-line-row__name">{{ sub.label }}</span>
+                                <span class="budget-line-row__badges">
+                                  <span class="expense-type-badge">
+                                    {{ sub.isFlexible ? 'Variable' : 'Fixed' }}
+                                  </span>
+                                  <span
+                                    v-if="(sub.spreadMonths ?? 1) > 1"
+                                    class="expense-spread-badge"
+                                  >
+                                    {{ sub.spreadMonths }} mo spread
+                                  </span>
+                                </span>
+                              </div>
+                              <p
+                                v-if="lineItemPlannedNote(sub)"
+                                class="budget-line-row__note"
+                                :title="lineItemPlannedNote(sub) ?? undefined"
+                              >
+                                {{ lineItemPlannedNote(sub) }}
+                              </p>
+                            </td>
+                            <td class="text-end budget-line-row__planned">
+                              <span class="budget-line-row__money">
+                                {{ lineItemPlannedPrimary(sub) }}
+                              </span>
+                              <span class="budget-line-row__suffix">
+                                {{ lineItemPlannedSuffix(sub) }}
+                              </span>
+                            </td>
+                            <td class="text-end budget-line-row__pct">
+                              {{ formatPercent(percentOfBudget(sub)) }}%
+                            </td>
+                            <td class="text-end budget-line-table__actions-cell">
+                              <div class="budget-line-actions">
+                                <button
+                                  type="button"
+                                  class="btn btn-sm budget-line-action budget-line-action--log"
+                                  @click="startLogPurchase(sub)"
+                                >
+                                  Log
+                                </button>
+                                <button
+                                  type="button"
+                                  class="btn btn-sm budget-line-action budget-line-action--edit"
+                                  @click="startEditSub(sub)"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  class="btn btn-sm budget-line-action budget-line-action--remove"
+                                  @click="deleteSubcategoryItem(sub)"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr
+                            v-else-if="loggingPurchaseSubId === sub.id"
+                            class="budget-line-row budget-line-row--form"
+                          >
+                            <td colspan="4">
+                              <form
+                                class="category-line-form budget-line-form"
+                                @submit.prevent="submitPurchase(sub)"
+                              >
+                      <div class="category-line-form__full category-line-form__header">
+                        <span class="fw-semibold">Log purchase · {{ sub.label }}</span>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-secondary"
+                          @click="cancelSubForm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <div>
+                        <label class="form-label">
+                          Amount
+                          <input
+                            v-model.number="purchaseAmount"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            class="form-control form-control-sm"
+                            required
+                          />
+                        </label>
+                      </div>
+                      <div>
+                        <label class="form-label">
+                          Spread (mo)
+                          <input
+                            v-model.number="purchaseSpreadMonths"
+                            type="number"
+                            min="1"
+                            max="60"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div class="category-line-form__full">
+                        <label class="form-label">
+                          Note
+                          <input
+                            v-model="purchaseLabel"
+                            type="text"
+                            class="form-control form-control-sm"
+                            placeholder="What you bought"
+                          />
+                        </label>
+                      </div>
+                      <div class="category-line-form__full category-line-form__actions">
+                        <button type="submit" class="btn btn-sm btn-primary">Save purchase</button>
+                      </div>
+                              </form>
+                            </td>
+                          </tr>
+                          <tr v-else class="budget-line-row budget-line-row--form">
+                            <td colspan="4">
+                              <form
+                                class="category-line-form budget-line-form"
+                                @submit.prevent="submitEditSubcategory(cat)"
+                              >
+                      <div class="category-line-form__full category-line-form__header">
+                        <span class="fw-semibold">Edit · {{ sub.label }}</span>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-secondary"
+                          @click="cancelSubForm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <div class="category-line-form__full">
+                        <label class="form-label">
+                          Name
+                          <input
+                            v-model="newLabel"
+                            type="text"
+                            class="form-control form-control-sm"
+                            required
+                          />
+                        </label>
+                      </div>
+                      <div>
+                        <label class="form-label">
+                          Type
+                          <select v-model="newType" class="form-select form-select-sm">
+                            <option value="fixed">Fixed</option>
+                            <option value="variable">Variable</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div>
+                        <label class="form-label">
+                          Target %
+                          <input
+                            v-model.number="newTargetPercent"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div v-if="newType === 'fixed'" class="category-line-form__full">
+                        <label class="form-label">
+                          Total amount
+                          <input
+                            v-model.number="newTargetAmount"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div v-if="newType === 'fixed'">
+                        <label class="form-label">
+                          Spread (mo)
+                          <input
+                            v-model.number="newSpreadMonths"
+                            type="number"
+                            min="1"
+                            max="60"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div v-if="newType === 'fixed' && newSpreadMonths > 1">
+                        <label class="form-label">
+                          Starts
+                          <input
+                            v-model="newSpreadStartMonth"
+                            type="month"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div v-if="newType === 'variable'">
+                        <label class="form-label">
+                          Min
+                          <input
+                            v-model.number="newMinAmount"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div v-if="newType === 'variable'">
+                        <label class="form-label">
+                          Max
+                          <input
+                            v-model.number="newMaxAmount"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            class="form-control form-control-sm"
+                          />
+                        </label>
+                      </div>
+                      <div class="category-line-form__full category-line-form__actions">
+                        <button type="submit" class="btn btn-sm btn-success">Save changes</button>
+                      </div>
+                              </form>
+                            </td>
+                          </tr>
+                        </template>
+
+                        <tr v-if="!(groupedSubcategories[cat.id] || []).length">
+                          <td colspan="4" class="budget-line-table__empty">
+                            No line items yet — add expenses to see how this bucket fills up.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <footer class="budget-category-panel__footer">
                 <button
                   type="button"
-                  class="btn btn-sm btn-outline-secondary"
-                  @click="editingCategoryId = null"
+                  class="btn btn-sm budget-category-panel__add"
+                  @click="startAddFor(cat.id)"
                 >
-                  Cancel
+                  + Add expense
                 </button>
-                <button type="submit" class="btn btn-sm btn-success">
-                  Save
-                </button>
-              </div>
-            </form>
-          </div>
-        </section>
-      </div>
-    </div>
-  </div>
 
-  <div
-    id="clearMonthModal"
-    class="modal fade"
-    tabindex="-1"
-    aria-labelledby="clearMonthModalLabel"
-    aria-hidden="true"
-  >
-    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 id="clearMonthModalLabel" class="modal-title">Start a clean month</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" />
-        </div>
-        <div class="modal-body">
-          <p class="mb-3">
-            You are about to clear activity for
-            <strong>{{ activeBudget?.name }}</strong>
-            only. Other budgets are not affected.
-          </p>
-          <ul class="small mb-3 ps-3 clear-month-modal-list">
-            <li>
-              <strong>What stays:</strong> this budget’s categories, subcategories, planned amounts,
-              and income figure. Your structure is unchanged.
-            </li>
-            <li>
-              <strong>What is removed:</strong> every transaction stored against this budget whose
-              date falls in the calendar month you pick below—imports, manual entries, and anything
-              else tied to this budget in that month.
-            </li>
-            <li>
-              <strong>Receipt files</strong> on disk are not deleted; only database links for those
-              transactions are cleared.
-            </li>
-            <li>This action <strong>cannot be undone</strong>.</li>
-          </ul>
-          <p class="small text-muted mb-2">
-            Use this when you want a fresh month of numbers without rebuilding the budget from
-            scratch.
-          </p>
-          <label class="form-label">Calendar month to clear</label>
-          <input v-model="clearActivityMonth" type="month" class="form-control" />
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="btn btn-warning"
-            :disabled="clearingMonth || !clearActivityMonth"
-            @click="confirmClearMonthActivity"
-          >
-            {{ clearingMonth ? 'Working…' : 'Clear that month' }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div
-    class="modal fade"
-    id="createBudgetModal"
-    tabindex="-1"
-    aria-labelledby="createBudgetModalLabel"
-    aria-hidden="true"
-  >
-    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="createBudgetModalLabel">Create budget</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <form @submit.prevent="submit">
-          <div class="modal-body row g-3">
-            <div class="col-12">
-              <label class="form-label">
-                Name
-                <input v-model="name" type="text" class="form-control" placeholder="Primary budget" />
-              </label>
-            </div>
-            <div class="col-6">
-              <label class="form-label">
-                Start month
-                <input v-model="startMonth" type="month" class="form-control" />
-              </label>
-            </div>
-            <div class="col-6">
-              <label class="form-label">
-                Monthly income
-                <input
-                  v-model.number="monthlyIncome"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  class="form-control"
-                  placeholder="4000"
-                />
-              </label>
-            </div>
-            <div class="col-12">
-              <label class="form-label">
-                Rule set
-                <select v-model="ruleSet" class="form-select">
-                  <option value="fiftyThirtyTwenty">50 / 30 / 20</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-            </div>
+                <form
+                  v-if="editingCategoryId === cat.id"
+                  class="category-line-form budget-line-form budget-category-panel__add-form"
+                  @submit.prevent="submitSubcategory(cat)"
+                >
+                  <div class="category-line-form__full">
+                    <label class="form-label">
+                      Name
+                      <input
+                        v-model="newLabel"
+                        type="text"
+                        class="form-control form-control-sm"
+                        placeholder="Rent, groceries, etc."
+                      />
+                    </label>
+                  </div>
+                  <div>
+                    <label class="form-label">
+                      Type
+                      <select v-model="newType" class="form-select form-select-sm">
+                        <option value="fixed">Fixed</option>
+                        <option value="variable">Variable</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div>
+                    <label class="form-label">
+                      Target %
+                      <input
+                        v-model.number="newTargetPercent"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        class="form-control form-control-sm"
+                        placeholder="10"
+                      />
+                    </label>
+                  </div>
+                  <div v-if="newType === 'fixed'" class="category-line-form__full">
+                    <label class="form-label">
+                      Total amount
+                      <input
+                        v-model.number="newTargetAmount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        class="form-control form-control-sm"
+                        placeholder="800"
+                      />
+                    </label>
+                  </div>
+                  <div v-if="newType === 'fixed'">
+                    <label class="form-label">
+                      Spread (mo)
+                      <input
+                        v-model.number="newSpreadMonths"
+                        type="number"
+                        min="1"
+                        max="60"
+                        step="1"
+                        class="form-control form-control-sm"
+                        placeholder="1"
+                      />
+                    </label>
+                  </div>
+                  <div v-if="newType === 'fixed' && newSpreadMonths > 1">
+                    <label class="form-label">
+                      Starts
+                      <input
+                        v-model="newSpreadStartMonth"
+                        type="month"
+                        class="form-control form-control-sm"
+                      />
+                    </label>
+                  </div>
+                  <div
+                    v-if="newType === 'fixed' && previewMonthlyFromForm() != null && newSpreadMonths > 1"
+                    class="category-line-form__full"
+                  >
+                    <p class="small expense-monthly-impact mb-0">
+                      Impact:
+                      <strong>{{ formatMoney(previewMonthlyFromForm()!) }}/mo</strong>
+                    </p>
+                  </div>
+                  <div v-if="newType === 'variable'">
+                    <label class="form-label">
+                      Min
+                      <input
+                        v-model.number="newMinAmount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        class="form-control form-control-sm"
+                        placeholder="100"
+                      />
+                    </label>
+                  </div>
+                  <div v-if="newType === 'variable'">
+                    <label class="form-label">
+                      Max
+                      <input
+                        v-model.number="newMaxAmount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        class="form-control form-control-sm"
+                        placeholder="300"
+                      />
+                    </label>
+                  </div>
+                  <div class="category-line-form__full category-line-form__actions">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="cancelSubForm"
+                    >
+                      Cancel
+                    </button>
+                    <button type="submit" class="btn btn-sm btn-success">Save expense</button>
+                  </div>
+                </form>
+                  </footer>
+                </div>
+              </section>
           </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-              Cancel
-            </button>
-            <button class="btn btn-success" type="submit">
-              Save budget
-            </button>
-          </div>
-        </form>
+        </CollapsibleSection>
       </div>
     </div>
   </div>

@@ -223,7 +223,7 @@ export const CategoryRepository = {
         label: 'Needs',
         ruleKey: 'needs',
         targetPercent: 50,
-        color: '#6366f1',
+        color: '#2563eb',
         sortOrder: 1,
       },
       {
@@ -231,7 +231,7 @@ export const CategoryRepository = {
         label: 'Wants',
         ruleKey: 'wants',
         targetPercent: 30,
-        color: '#ec4899',
+        color: '#db2777',
         sortOrder: 2,
       },
       {
@@ -239,7 +239,7 @@ export const CategoryRepository = {
         label: 'Savings / Debt',
         ruleKey: 'savingsDebt',
         targetPercent: 20,
-        color: '#22c55e',
+        color: '#d97706',
         sortOrder: 3,
       },
     ];
@@ -264,7 +264,8 @@ export const CategoryRepository = {
         `SELECT id, budget_id AS budgetId, parent_category_id AS parentCategoryId,
                 label, target_percent AS targetPercent, target_amount AS targetAmount,
                 min_amount AS minAmount, max_amount AS maxAmount,
-                is_flexible AS isFlexible, sort_order AS sortOrder
+                is_flexible AS isFlexible, spread_months AS spreadMonths,
+                spread_start_month AS spreadStartMonth, sort_order AS sortOrder
          FROM budget_subcategories
          WHERE budget_id = ?
          ORDER BY sort_order ASC`
@@ -292,12 +293,15 @@ export const CategoryRepository = {
     minAmount?: number | null;
     maxAmount?: number | null;
     isFlexible: boolean;
+    spreadMonths?: number;
+    spreadStartMonth?: string | null;
     sortOrder?: number;
   }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
+    const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
     const stmt = db().prepare(
       `INSERT INTO budget_subcategories
-       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, sort_order)
-       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @sortOrder)`
+       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, spread_months, spread_start_month, sort_order)
+       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @spreadMonths, @spreadStartMonth, @sortOrder)`
     );
     stmt.run({
       budgetId: input.budgetId,
@@ -308,26 +312,77 @@ export const CategoryRepository = {
       minAmount: input.isFlexible ? input.minAmount ?? null : null,
       maxAmount: input.isFlexible ? input.maxAmount ?? null : null,
       isFlexible: input.isFlexible ? 1 : 0,
+      spreadMonths,
+      spreadStartMonth:
+        spreadMonths > 1 ? input.spreadStartMonth ?? null : null,
       sortOrder: input.sortOrder ?? 99,
     });
+    return this.listByBudget(input.budgetId);
+  },
+  updateSubcategory(input: {
+    id: number;
+    budgetId: number;
+    label: string;
+    targetPercent?: number | null;
+    targetAmount?: number | null;
+    minAmount?: number | null;
+    maxAmount?: number | null;
+    isFlexible: boolean;
+    spreadMonths?: number;
+    spreadStartMonth?: string | null;
+  }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
+    const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
+    db()
+      .prepare(
+        `UPDATE budget_subcategories
+         SET label = @label,
+             target_percent = @targetPercent,
+             target_amount = @targetAmount,
+             min_amount = @minAmount,
+             max_amount = @maxAmount,
+             is_flexible = @isFlexible,
+             spread_months = @spreadMonths,
+             spread_start_month = @spreadStartMonth
+         WHERE id = @id AND budget_id = @budgetId`,
+      )
+      .run({
+        id: input.id,
+        budgetId: input.budgetId,
+        label: input.label,
+        targetPercent: input.targetPercent ?? null,
+        targetAmount: input.isFlexible ? null : input.targetAmount ?? null,
+        minAmount: input.isFlexible ? input.minAmount ?? null : null,
+        maxAmount: input.isFlexible ? input.maxAmount ?? null : null,
+        isFlexible: input.isFlexible ? 1 : 0,
+        spreadMonths,
+        spreadStartMonth:
+          spreadMonths > 1 ? input.spreadStartMonth ?? null : null,
+      });
+    return this.listByBudget(input.budgetId);
+  },
+  deleteSubcategory(input: {
+    id: number;
+    budgetId: number;
+  }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
+    db()
+      .prepare('DELETE FROM budget_subcategories WHERE id = ? AND budget_id = ?')
+      .run(input.id, input.budgetId);
     return this.listByBudget(input.budgetId);
   },
 };
 
 export const TransactionRepository = {
   listByBudget(profileId: number, budgetId: number | null): Transaction[] {
+    const cols = `id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
+                created_at AS createdAt, updated_at AS updatedAt`;
     const stmt = budgetId
-      ? `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, merchant,
-                description, source, goal_id AS goalId,
-                created_at AS createdAt, updated_at AS updatedAt
+      ? `SELECT ${cols}
          FROM transactions
          WHERE profile_id = ? AND budget_id = ?
          ORDER BY date DESC`
-      : `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, merchant,
-                description, source, goal_id AS goalId,
-                created_at AS createdAt, updated_at AS updatedAt
+      : `SELECT ${cols}
          FROM transactions
          WHERE profile_id = ?
          ORDER BY date DESC`;
@@ -339,11 +394,26 @@ export const TransactionRepository = {
     return db()
       .prepare(
         `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, merchant,
-                description, source, goal_id AS goalId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
                 created_at AS createdAt, updated_at AS updatedAt
          FROM transactions
-         WHERE profile_id = ? AND budget_id = ? AND source = 'manual' AND goal_id IS NULL
+         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
+           AND goal_id IS NULL AND entry_kind = 'unexpected'
+         ORDER BY date DESC, created_at DESC`,
+      )
+      .all(profileId, budgetId) as Transaction[];
+  },
+  listPurchases(profileId: number, budgetId: number): Transaction[] {
+    return db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM transactions
+         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
+           AND goal_id IS NULL AND entry_kind = 'purchase'
          ORDER BY date DESC, created_at DESC`,
       )
       .all(profileId, budgetId) as Transaction[];
@@ -353,8 +423,8 @@ export const TransactionRepository = {
     return db()
       .prepare(
         `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, merchant,
-                description, source, goal_id AS goalId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
                 created_at AS createdAt, updated_at AS updatedAt
          FROM transactions
          WHERE profile_id = ? AND budget_id = ? AND source = 'manual' AND goal_id IS NOT NULL
@@ -394,6 +464,42 @@ export const TransactionRepository = {
     tx();
     return this.listByBudget(input.profileId, input.budgetId);
   },
+  /** One-off ledger entry (Transactions page) — not a purchase or unexpected expense. */
+  createSingle(input: {
+    profileId: number;
+    budgetId: number;
+    date: string;
+    amount: number;
+    merchant?: string | null;
+    description?: string | null;
+  }): Transaction {
+    const createdAt = now();
+    const stmt = db().prepare(
+      `INSERT INTO transactions
+       (profile_id, budget_id, subcategory_id, date, amount, spread_months, merchant, description, source, goal_id, entry_kind, created_at, updated_at)
+       VALUES (@profileId, @budgetId, NULL, @date, @amount, 1, @merchant, @description, 'manual', NULL, NULL, @createdAt, @createdAt)`,
+    );
+    const result = stmt.run({
+      profileId: input.profileId,
+      budgetId: input.budgetId,
+      date: input.date,
+      amount: input.amount,
+      merchant: input.merchant?.trim() || null,
+      description: input.description?.trim() || null,
+      createdAt,
+    });
+    const id = Number(result.lastInsertRowid);
+    return db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM transactions
+         WHERE id = ?`,
+      )
+      .get(id) as Transaction;
+  },
   createManual(input: {
     profileId: number;
     budgetId: number;
@@ -402,6 +508,8 @@ export const TransactionRepository = {
     amount: number;
     description?: string | null;
     goalId?: number | null;
+    spreadMonths?: number;
+    entryKind?: 'purchase' | 'unexpected' | null;
   }): Transaction {
     const goalId = input.goalId ?? null;
     if (goalId != null) {
@@ -426,10 +534,18 @@ export const TransactionRepository = {
       }
     }
     const createdAt = now();
+    const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
+    let entryKind: string | null = null;
+    if (goalId == null) {
+      entryKind = input.entryKind ?? 'unexpected';
+      if (entryKind === 'purchase' && input.subcategoryId == null) {
+        throw new Error('Purchases must be linked to a line item.');
+      }
+    }
     const stmt = db().prepare(
       `INSERT INTO transactions
-       (profile_id, budget_id, subcategory_id, date, amount, merchant, description, source, goal_id, created_at, updated_at)
-       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, NULL, @description, 'manual', @goalId, @createdAt, @createdAt)`,
+       (profile_id, budget_id, subcategory_id, date, amount, spread_months, merchant, description, source, goal_id, entry_kind, created_at, updated_at)
+       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, @spreadMonths, NULL, @description, 'manual', @goalId, @entryKind, @createdAt, @createdAt)`,
     );
     const result = stmt.run({
       profileId: input.profileId,
@@ -437,16 +553,18 @@ export const TransactionRepository = {
       subcategoryId: input.subcategoryId,
       date: input.date,
       amount: input.amount,
+      spreadMonths,
       description: input.description ?? null,
       goalId,
+      entryKind,
       createdAt,
     });
     const id = Number(result.lastInsertRowid);
     return db()
       .prepare(
         `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, merchant,
-                description, source, goal_id AS goalId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
                 created_at AS createdAt, updated_at AS updatedAt
          FROM transactions
          WHERE id = ?`,

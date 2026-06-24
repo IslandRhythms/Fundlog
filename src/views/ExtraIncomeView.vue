@@ -117,37 +117,40 @@ async function removeRow(r: BudgetMonthIncomeBoost) {
 
     <template v-else-if="!activeBudget">
       <p class="status-text mb-0">
-        Select or create an active budget on the
-        <RouterLink to="/budgets">Budgets</RouterLink>
-        page. Extra income is stored per budget.
+        Select or create an active budget on
+        <RouterLink to="/budget-records">Budget Records</RouterLink>.
+        Extra income is stored per budget.
       </p>
     </template>
 
     <template v-else>
-      <section class="card border shadow-none mb-4">
+      <section class="card page-section-card mb-4">
         <div class="card-body py-3">
-          <h3 class="h6 mb-2">Effective income</h3>
-          <p class="small text-muted mb-2">
+          <h3 class="h6 card-title mb-2">Effective income</h3>
+          <p class="small mb-3">
             Budget <strong>{{ activeBudget.name }}</strong>
             · month <strong>{{ formatMonthLabel(selectedMonth) }}</strong>
           </p>
-          <dl class="row small mb-0 extra-income-dl">
-            <dt class="col-sm-4 text-muted">Base (from Budgets)</dt>
-            <dd class="col-sm-8">{{ formatMoney(baseIncome) }}</dd>
-            <dt class="col-sm-4 text-muted">Extra this month</dt>
-            <dd class="col-sm-8">
-              {{ formatMoney(boostTotal) }}
-              <span v-if="!rowsForMonth.length" class="text-muted">— none recorded</span>
-            </dd>
-            <dt class="col-sm-4 text-muted fw-semibold text-body">Effective total</dt>
-            <dd class="col-sm-8 fw-semibold">{{ formatMoney(effectiveIncome) }}</dd>
-          </dl>
+          <div class="budget-stat-grid">
+            <div class="budget-stat">
+              <div class="budget-stat__label">Base</div>
+              <div class="budget-stat__value">{{ formatMoney(baseIncome) }}</div>
+            </div>
+            <div class="budget-stat">
+              <div class="budget-stat__label">Extra this month</div>
+              <div class="budget-stat__value">{{ formatMoney(boostTotal) }}</div>
+            </div>
+            <div class="budget-stat">
+              <div class="budget-stat__label">Effective total</div>
+              <div class="budget-stat__value">{{ formatMoney(effectiveIncome) }}</div>
+            </div>
+          </div>
         </div>
       </section>
 
       <div class="row g-3">
         <div class="col-lg-5">
-          <section class="card border shadow-none h-100">
+          <section class="card page-section-card h-100">
             <div class="card-body">
               <h3 class="h6 mb-3">Add extra for a month</h3>
               <div class="mb-3">
@@ -207,7 +210,7 @@ async function removeRow(r: BudgetMonthIncomeBoost) {
           </section>
         </div>
         <div class="col-lg-7">
-          <section class="card border shadow-none h-100">
+          <section class="card page-section-card h-100">
             <div class="card-body">
               <h3 class="h6 mb-2">Entries for {{ formatMonthLabel(selectedMonth) }}</h3>
               <p class="small text-muted mb-3">

@@ -3,11 +3,23 @@ import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
+import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
+import CollapsibleSection from '../components/CollapsibleSection.vue';
+import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import UnexpectedExpensesBarChart from '../components/UnexpectedExpensesBarChart.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
+import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { calendarMonthNow } from '../shared/calendarMonth';
-import type { BudgetCategory, BudgetSubcategory, Goal, Transaction } from '../shared/types';
+import { monthlyPortion } from '../shared/monthSpread';
+import {
+  computePlannedExpenseBarSegments,
+  plannedAmountFromSub,
+  transactionMonthlyImpact,
+} from '../shared/plannedExpenseBar';
+import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
+import { FUND_COLORS } from '../shared/fundColors';
+import type { BudgetCategory, BudgetSubcategory, Goal, Profile, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
 const toast = useToast();
@@ -16,23 +28,91 @@ const loading = ref(false);
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpected = ref<Transaction[]>([]);
+const purchases = ref<Transaction[]>([]);
 const goalContributions = ref<Transaction[]>([]);
 const amount = ref<number | null>(null);
+const spreadMonths = ref(1);
 const categoryId = ref<number | null>(null);
 const label = ref('');
+const purchaseAmount = ref<number | null>(null);
+const purchaseSpreadMonths = ref(1);
+const purchaseSubcategoryId = ref<number | null>(null);
+const purchaseLabel = ref('');
 const barMetric = ref<'amount' | 'count'>('amount');
 
 const activeBudget = computed(() => domain.activeBudget);
+
+const activeProfile = computed<Profile | null>(() => {
+  const id = domain.activeProfileId;
+  if (!id) return null;
+  return domain.profiles.find((p) => p.id === id) ?? null;
+});
+
+const groupedSubcategories = computed(() => {
+  const grouped: Record<number, BudgetSubcategory[]> = {};
+  for (const sub of subcategories.value) {
+    const parentId = sub.parentCategoryId ?? 0;
+    if (!grouped[parentId]) grouped[parentId] = [];
+    grouped[parentId].push(sub);
+  }
+  return grouped;
+});
+
+const viewingMonth = calendarMonthNow();
+
+const budgetIncome = computed(() => {
+  const b = activeBudget.value;
+  if (!b) return 0;
+  return domain.effectiveMonthlyIncomeFor(b.id, viewingMonth);
+});
+
+const plannedBarResult = computed(() =>
+  computePlannedExpenseBarSegments(
+    categories.value,
+    groupedSubcategories.value,
+    subcategories.value,
+    unexpected.value,
+    goalContributions.value,
+    budgetIncome.value,
+    viewingMonth,
+  ),
+);
+
+const headroom = computed(() =>
+  computeBudgetHeadroom(categories.value, plannedBarResult.value, budgetIncome.value),
+);
+
+const monthLabel = computed(() => {
+  const [y, m] = viewingMonth.split('-');
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+});
+
+function formatMoney(amount: number) {
+  return formatMoneyExact(amount, activeProfile.value?.currencyCode ?? 'USD');
+}
+
+function txMonthImpact(tx: Transaction) {
+  return transactionMonthlyImpact(tx, viewingMonth);
+}
+
+function txCategoryColor(tx: Transaction, fallback: string) {
+  return parentCategoryForSubcategory(tx.subcategoryId)?.color ?? fallback;
+}
 
 async function loadData() {
   if (!activeBudget.value || !domain.activeProfileId) return;
   loading.value = true;
   try {
-    const catsResult = await (window as any).fundlog.category.listByBudget(activeBudget.value.id);
+    const catsResult = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = catsResult.categories;
     subcategories.value = catsResult.subcategories;
-    const [tx, goalTx] = await Promise.all([
+    const [tx, purchaseTx, goalTx] = await Promise.all([
       window.fundlog.transaction.listUnexpected(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+      window.fundlog.transaction.listPurchases(
         domain.activeProfileId,
         activeBudget.value.id,
       ),
@@ -42,6 +122,7 @@ async function loadData() {
       ),
     ]);
     unexpected.value = tx;
+    purchases.value = purchaseTx;
     goalContributions.value = goalTx;
   } finally {
     loading.value = false;
@@ -79,13 +160,39 @@ function parentCategoryForSubcategory(subId: number | null): BudgetCategory | nu
   return categoryById.value[pid] ?? null;
 }
 
+const spreadPreview = computed(() => {
+  if (!amount.value || spreadMonths.value <= 1) return null;
+  return monthlyPortion(amount.value, spreadMonths.value);
+});
+
 const totalUnexpected = computed(() =>
-  unexpected.value.reduce((sum, tx) => sum + tx.amount, 0),
+  unexpected.value.reduce(
+    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth),
+    0,
+  ),
+);
+
+const totalPurchases = computed(() =>
+  purchases.value.reduce(
+    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth),
+    0,
+  ),
+);
+
+const purchaseSpreadPreview = computed(() => {
+  if (!purchaseAmount.value || purchaseSpreadMonths.value <= 1) return null;
+  return monthlyPortion(purchaseAmount.value, purchaseSpreadMonths.value);
+});
+
+const recentPurchases = computed(() => purchases.value.slice(0, 10));
+
+const unexpectedThisMonth = computed(() =>
+  unexpected.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth) > 0),
 );
 
 const mostCommonCategory = computed(() => {
   const counts: Record<number, number> = {};
-  for (const tx of unexpected.value) {
+  for (const tx of unexpectedThisMonth.value) {
     if (tx.subcategoryId == null) continue;
     const sub = subcategoryById.value[tx.subcategoryId];
     const parentId = sub?.parentCategoryId;
@@ -104,22 +211,23 @@ const mostCommonCategory = computed(() => {
   return bestId != null ? categoryById.value[bestId] : null;
 });
 
-/** Per parent category: where unexpected expenses land (all recorded manual entries for this budget). */
+/** Per parent category: unexpected spending with impact this calendar month. */
 const unexpectedBarSegments = computed(() => {
   const totals: Record<number, { amount: number; count: number }> = {};
   let uncAmount = 0;
   let uncCount = 0;
 
-  for (const tx of unexpected.value) {
+  for (const tx of unexpectedThisMonth.value) {
+    const impact = transactionMonthlyImpact(tx, viewingMonth);
     const cat = parentCategoryForSubcategory(tx.subcategoryId);
     if (!cat) {
-      uncAmount += tx.amount;
-      uncCount += 1;
+      uncAmount += impact;
+      if (impact > 0) uncCount += 1;
       continue;
     }
     const cur = totals[cat.id] ?? { amount: 0, count: 0 };
-    cur.amount += tx.amount;
-    cur.count += 1;
+    cur.amount += impact;
+    if (impact > 0) cur.count += 1;
     totals[cat.id] = cur;
   }
 
@@ -142,19 +250,18 @@ const unexpectedBarSegments = computed(() => {
   return rows;
 });
 
-const recentUnexpected = computed(() => unexpected.value.slice(0, 10));
+const recentUnexpected = computed(() => unexpectedThisMonth.value.slice(0, 10));
 
 const baseBudgetIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
-
-const budgetIncome = computed(() => {
-  const b = activeBudget.value;
-  if (!b) return 0;
-  return domain.effectiveMonthlyIncomeFor(b.id, calendarMonthNow());
-});
 
 const monthIncomeBoost = computed(() =>
   Math.max(0, budgetIncome.value - baseBudgetIncome.value),
 );
+
+const purchasesPercent = computed(() => {
+  if (!budgetIncome.value || !totalPurchases.value) return 0;
+  return Math.min(100, (totalPurchases.value / budgetIncome.value) * 100);
+});
 
 const unexpectedPercent = computed(() => {
   if (!budgetIncome.value || !totalUnexpected.value) return 0;
@@ -170,7 +277,10 @@ const goalById = computed(() => {
 });
 
 const totalGoalSavingsRecorded = computed(() =>
-  goalContributions.value.reduce((sum, tx) => sum + tx.amount, 0),
+  goalContributions.value.reduce(
+    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth),
+    0,
+  ),
 );
 
 const goalSavingsPercent = computed(() => {
@@ -180,17 +290,7 @@ const goalSavingsPercent = computed(() => {
 
 const recentGoalContributions = computed(() => goalContributions.value.slice(0, 10));
 
-const plannedAmount = (sub: BudgetSubcategory) => {
-  if (!sub.isFlexible && sub.targetAmount != null) {
-    return sub.targetAmount;
-  }
-  if (sub.isFlexible && (sub.maxAmount != null || sub.minAmount != null)) {
-    const min = sub.minAmount ?? 0;
-    const max = sub.maxAmount ?? min;
-    return (min + max) / 2;
-  }
-  return 0;
-};
+const plannedAmount = (sub: BudgetSubcategory) => plannedAmountFromSub(sub, viewingMonth);
 
 const totalPlanned = computed(() =>
   subcategories.value.reduce((sum, sub) => sum + plannedAmount(sub), 0),
@@ -199,6 +299,19 @@ const totalPlanned = computed(() =>
 const plannedPercent = computed(() => {
   if (!budgetIncome.value || !totalPlanned.value) return 0;
   return Math.min(100, (totalPlanned.value / budgetIncome.value) * 100);
+});
+
+const combinedTotal = computed(
+  () =>
+    totalPlanned.value +
+    totalPurchases.value +
+    totalUnexpected.value +
+    totalGoalSavingsRecorded.value,
+);
+
+const combinedPercent = computed(() => {
+  if (!budgetIncome.value || !combinedTotal.value) return 0;
+  return Math.min(100, (combinedTotal.value / budgetIncome.value) * 100);
 });
 
 onMounted(async () => {
@@ -225,15 +338,18 @@ async function addUnexpected() {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   try {
-    await (window as any).fundlog.transaction.createManual({
+    await window.fundlog.transaction.createManual({
       profileId: domain.activeProfileId,
       budgetId: activeBudget.value.id,
       subcategoryId,
       date,
       amount: amount.value,
       description: label.value.trim(),
+      spreadMonths: Math.max(1, Math.floor(spreadMonths.value || 1)),
+      entryKind: 'unexpected',
     });
     amount.value = null;
+    spreadMonths.value = 1;
     categoryId.value = null;
     label.value = '';
     await loadData();
@@ -243,24 +359,52 @@ async function addUnexpected() {
     toast.error('Could not add expense.');
   }
 }
+
+async function addPurchase() {
+  if (
+    !activeBudget.value ||
+    !domain.activeProfileId ||
+    !purchaseAmount.value ||
+    !purchaseSubcategoryId.value
+  )
+    return;
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const sub = subcategoryById.value[purchaseSubcategoryId.value];
+  try {
+    await window.fundlog.transaction.createManual({
+      profileId: domain.activeProfileId,
+      budgetId: activeBudget.value.id,
+      subcategoryId: purchaseSubcategoryId.value,
+      date,
+      amount: purchaseAmount.value,
+      description: purchaseLabel.value.trim() || sub?.label || 'Purchase',
+      spreadMonths: Math.max(1, Math.floor(purchaseSpreadMonths.value || 1)),
+      entryKind: 'purchase',
+    });
+    purchaseAmount.value = null;
+    purchaseSpreadMonths.value = 1;
+    purchaseSubcategoryId.value = null;
+    purchaseLabel.value = '';
+    await loadData();
+    hideBsModal('addPurchaseModal');
+    toast.success('Purchase logged.');
+  } catch (e) {
+    console.error(e);
+    toast.error('Could not log purchase.');
+  }
+}
 </script>
 
 <template>
-  <div class="view container-fluid">
+  <div class="view view-expenses container-fluid">
+    <p class="view-page-eyebrow mb-1">Spending</p>
     <h2 class="mb-2">Expenses</h2>
-    <p class="view-subtitle mb-4">
-      Track unexpected expenses and goal savings against your plan. Summary percentages use your
-      active budget’s effective income for
-      <strong>this calendar month</strong> (see
-      <RouterLink to="/extra-income">Extra income</RouterLink>
-      for one-off bumps). Goal savings use the same income basis and appear on
-      <RouterLink to="/budgets">Budgets</RouterLink>
-      and
-      <RouterLink to="/dashboard">Dashboard</RouterLink>
-      like unexpected spending.
-    </p>
-    <p v-if="activeBudget && monthIncomeBoost > 0" class="small text-muted mb-3">
-      This month includes {{ monthIncomeBoost.toLocaleString() }} extra on top of the budget base.
+    <p class="view-subtitle expenses-page-intro mb-4">
+      Log <strong>purchases</strong> against budget line items and track
+      <strong>unexpected</strong> spending on its own. Summary percentages use your active
+      budget’s effective income for <strong>{{ monthLabel }}</strong> — see
+      <RouterLink to="/extra-income">Extra income</RouterLink> for one-off bumps.
     </p>
 
     <p v-if="!activeBudget" class="status-text">
@@ -269,206 +413,386 @@ async function addUnexpected() {
 
     <LoadingView v-else-if="loading" message="Loading expenses…" />
 
-    <div v-else class="row g-3">
-      <div class="col-12 col-lg-6">
-        <section class="card h-100">
-          <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h3 class="h5 card-title mb-0">Unexpected expense summary</h3>
-              <button
-                class="btn btn-sm btn-primary"
-                type="button"
-                data-bs-toggle="modal"
-                data-bs-target="#addUnexpectedModal"
-              >
-                Add unexpected expense
-              </button>
-            </div>
-            <p v-if="!unexpected.length" class="small text-muted mb-3">
-              No unexpected expenses recorded yet.
-            </p>
-            <div v-else class="mb-3">
-              <p class="mb-1 small">
-                Planned (from budget):
-                <strong>{{ totalPlanned.toLocaleString() }}</strong>
-                ({{ plannedPercent.toFixed(1) }}% of budget)
-              </p>
-              <p class="mb-1 small">
-                Unexpected:
-                <strong>{{ totalUnexpected.toLocaleString() }}</strong>
-                ({{ unexpectedPercent.toFixed(1) }}% of budget)
-              </p>
-              <div class="progress mt-2" style="height: 6px">
-                <div
-                  class="progress-bar bg-primary"
-                  role="progressbar"
-                  :style="{ width: plannedPercent + '%' }"
-                  :aria-valuenow="plannedPercent"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                />
-                <div
-                  class="progress-bar bg-danger"
-                  role="progressbar"
-                  :style="{ width: unexpectedPercent + '%' }"
-                  :aria-valuenow="unexpectedPercent"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                />
+    <div v-else class="expenses-page-body">
+      <div class="expenses-quick-actions mb-3">
+        <button
+          type="button"
+          class="expenses-quick-action expenses-quick-action--purchase"
+          data-bs-toggle="modal"
+          data-bs-target="#addPurchaseModal"
+        >
+          <span class="expenses-quick-action__glyph" aria-hidden="true">+</span>
+          <span class="expenses-quick-action__copy">
+            <span class="expenses-quick-action__label">Log purchase</span>
+            <span class="expenses-quick-action__hint">Against a budget line item</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="expenses-quick-action expenses-quick-action--unexpected"
+          data-bs-toggle="modal"
+          data-bs-target="#addUnexpectedModal"
+        >
+          <span class="expenses-quick-action__glyph" aria-hidden="true">!</span>
+          <span class="expenses-quick-action__copy">
+            <span class="expenses-quick-action__label">Add unexpected</span>
+            <span class="expenses-quick-action__hint">Off-plan spending this month</span>
+          </span>
+        </button>
+        <RouterLink to="/goals" class="expenses-quick-action expenses-quick-action--goals">
+          <span class="expenses-quick-action__glyph" aria-hidden="true">◎</span>
+          <span class="expenses-quick-action__copy">
+            <span class="expenses-quick-action__label">Record goal savings</span>
+            <span class="expenses-quick-action__hint">On the Goals page</span>
+          </span>
+        </RouterLink>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-12">
+          <CollapsibleSection
+            title="What's left"
+            :meta="headroom.spendingTiers.memorableLine ?? monthLabel"
+            storage-key="expenses-money-left"
+            integrated
+          >
+            <MoneyLeftSummary
+              embedded
+              variant="snapshot"
+              :headroom="headroom"
+              :currency-code="activeProfile?.currencyCode ?? 'USD'"
+              :month-label="monthLabel"
+            />
+          </CollapsibleSection>
+        </div>
+
+        <div class="col-12">
+          <section class="expenses-snapshot expenses-panel">
+            <header class="expenses-snapshot__header">
+              <div>
+                <h3 class="expenses-snapshot__title mb-0">This month</h3>
+                <p class="expenses-snapshot__meta mb-0">
+                  {{ formatMoney(budgetIncome) }} effective income
+                  <span v-if="monthIncomeBoost > 0">
+                    · +{{ formatMoney(monthIncomeBoost) }} extra
+                  </span>
+                </p>
               </div>
-              <p v-if="mostCommonCategory" class="mb-0 small">
-                Most frequent category:
-                <strong>{{ mostCommonCategory.label }}</strong>
-              </p>
+              <div class="expenses-snapshot__badge">
+                {{ formatPercent(combinedPercent) }}% accounted
+              </div>
+            </header>
+
+            <div class="budget-stat-grid expenses-snapshot__stats">
+              <div class="budget-stat">
+                <div class="budget-stat__label">Planned</div>
+                <div class="budget-stat__value">{{ formatMoney(totalPlanned) }}</div>
+                <div class="budget-stat__pct">{{ formatPercent(plannedPercent) }}% of income</div>
+              </div>
+              <div class="budget-stat budget-stat--purchase">
+                <div class="budget-stat__label">Purchases</div>
+                <div class="budget-stat__value">{{ formatMoney(totalPurchases) }}</div>
+                <div class="budget-stat__pct">{{ formatPercent(purchasesPercent) }}% of income</div>
+              </div>
+              <div class="budget-stat budget-stat--unexpected">
+                <div class="budget-stat__label">Unexpected</div>
+                <div class="budget-stat__value">{{ formatMoney(totalUnexpected) }}</div>
+                <div class="budget-stat__pct">{{ formatPercent(unexpectedPercent) }}% of income</div>
+              </div>
+              <div class="budget-stat budget-stat--goal">
+                <div class="budget-stat__label">Goal savings</div>
+                <div class="budget-stat__value">{{ formatMoney(totalGoalSavingsRecorded) }}</div>
+                <div class="budget-stat__pct">{{ formatPercent(goalSavingsPercent) }}% of income</div>
+              </div>
             </div>
 
-            <div v-if="unexpected.length" class="mt-4 pt-3 border-top">
-              <h4 class="h6 card-title mb-2">Unexpected expenses by category</h4>
-              <p class="small text-muted mb-2">
-                All manual unexpected entries on this budget, grouped by the category you chose when
-                adding them.
-              </p>
-              <div
-                class="btn-group btn-group-sm mb-3"
-                role="group"
-                aria-label="Bar chart metric"
-              >
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary"
-                  :class="{ active: barMetric === 'amount' }"
-                  @click="barMetric = 'amount'"
-                >
-                  By amount
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary"
-                  :class="{ active: barMetric === 'count' }"
-                  @click="barMetric = 'count'"
-                >
-                  By count
-                </button>
-              </div>
-              <UnexpectedExpensesBarChart
-                :segments="unexpectedBarSegments"
-                :metric="barMetric"
+            <div class="expenses-snapshot__mix">
+              <p class="expenses-snapshot__mix-label">Where it goes</p>
+              <PlannedExpenseCategoryBar
+                :category-parts="plannedBarResult.categoryParts"
+                :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
+                empty-hint="Add line items on Budgets to see the mix."
+                aria-label="Monthly spending mix by category"
               />
+              <p class="expenses-snapshot__foot small text-muted mb-0">
+                {{ formatMoney(combinedTotal) }} total this month across planned, purchases,
+                unexpected, and goal savings.
+              </p>
             </div>
+          </section>
+        </div>
 
-            <h4 class="h6 card-title mt-2 mb-2">Recent unexpected expenses</h4>
-            <ul v-if="recentUnexpected.length" class="list-unstyled mb-0 small">
+        <div class="col-12 col-lg-6">
+          <CollapsibleSection
+            class="expenses-panel expenses-panel--purchase"
+            title="Purchases"
+            :meta="
+              purchases.length
+                ? `${purchases.length} logged · ${formatMoney(totalPurchases)} this month`
+                : 'None yet'
+            "
+            storage-key="expenses-purchases"
+          >
+            <p class="expenses-panel__intro small text-muted mb-3">
+              Planned spending logged against a line item from
+              <RouterLink to="/budgets">Budgets</RouterLink>.
+            </p>
+            <ul v-if="recentPurchases.length" class="expense-activity-list list-unstyled mb-0">
               <li
-                v-for="tx in recentUnexpected"
+                v-for="tx in recentPurchases"
                 :key="tx.id"
-                class="d-flex justify-content-between border-bottom py-1 unexpected-item"
-                :style="{
-                  borderLeft:
-                    '4px solid ' +
-                    (parentCategoryForSubcategory(tx.subcategoryId)?.color || '#6b7280'),
-                }"
+                class="expense-activity-item"
               >
-                <div>
-                  <div>{{ tx.description || 'Unexpected expense' }}</div>
-                  <div class="text-muted">
+                <span
+                  class="expense-activity-item__swatch"
+                  :style="{ background: txCategoryColor(tx, FUND_COLORS.purchase) }"
+                />
+                <div class="expense-activity-item__main">
+                  <span class="expense-activity-item__title">
+                    {{ tx.description || 'Purchase' }}
+                  </span>
+                  <span class="expense-activity-item__meta">
                     {{ tx.date }}
-                  </div>
+                    <span v-if="tx.subcategoryId != null && subcategoryById[tx.subcategoryId]">
+                      · {{ subcategoryById[tx.subcategoryId].label }}
+                    </span>
+                  </span>
                 </div>
-                <div class="text-end">
-                  <div>{{ tx.amount.toFixed(2) }}</div>
+                <div class="expense-activity-item__amounts">
+                  <span class="expense-activity-item__total">{{ formatMoney(tx.amount) }}</span>
+                  <span
+                    v-if="Math.abs(txMonthImpact(tx) - tx.amount) > 0.009"
+                    class="expense-activity-item__impact"
+                  >
+                    {{ formatMoney(txMonthImpact(tx)) }}/mo
+                  </span>
                 </div>
               </li>
             </ul>
-            <p v-else class="small text-muted mb-0">
-              No recent unexpected expenses.
+            <p v-else class="expenses-panel__empty small mb-0">
+              No purchases logged yet. Use <strong>Log purchase</strong> above.
             </p>
-          </div>
-        </section>
-      </div>
+          </CollapsibleSection>
+        </div>
 
-      <div class="col-12 col-lg-6">
-        <section class="card h-100">
-          <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h3 class="h5 card-title mb-0">Goal savings summary</h3>
-              <RouterLink to="/goals" class="btn btn-sm btn-outline-success">Goals</RouterLink>
-            </div>
-            <p class="small text-muted mb-3">
-              Amounts from <strong>Record savings</strong> on the Goals page. They map to your
-              savings/debt category on budget bars (or a “Goal savings” segment if there is no savings
-              category).
+        <div class="col-12 col-lg-6">
+          <CollapsibleSection
+            class="expenses-panel expenses-panel--unexpected"
+            title="Unexpected expenses"
+            :meta="
+              unexpectedThisMonth.length
+                ? `${unexpectedThisMonth.length} this month · ${formatMoney(totalUnexpected)}`
+                : 'None this month'
+            "
+            storage-key="expenses-unexpected"
+          >
+            <p
+              v-if="mostCommonCategory && unexpectedThisMonth.length"
+              class="expenses-panel__highlight small mb-3"
+            >
+              Most frequent category:
+              <strong>{{ mostCommonCategory.label }}</strong>
             </p>
-            <p v-if="!goalContributions.length" class="small text-muted mb-0">
-              No goal savings recorded on this budget yet.
+            <p v-else-if="!unexpectedThisMonth.length" class="expenses-panel__empty small text-muted mb-3">
+              No unexpected expenses this month.
             </p>
-            <div v-else class="mb-0">
-              <p class="mb-1 small">
-                Planned (from budget):
-                <strong>{{ totalPlanned.toLocaleString() }}</strong>
-                ({{ plannedPercent.toFixed(1) }}% of budget)
-              </p>
-              <p class="mb-1 small">
-                Unexpected:
-                <strong>{{ totalUnexpected.toLocaleString() }}</strong>
-                ({{ unexpectedPercent.toFixed(1) }}% of budget)
-              </p>
-              <p class="mb-1 small">
-                Goal savings:
-                <strong>{{ totalGoalSavingsRecorded.toLocaleString() }}</strong>
-                ({{ goalSavingsPercent.toFixed(1) }}% of budget)
-              </p>
-              <div class="progress mt-2" style="height: 6px">
-                <div
-                  class="progress-bar bg-primary"
-                  role="progressbar"
-                  :style="{ width: plannedPercent + '%' }"
-                  :aria-valuenow="plannedPercent"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                />
-                <div
-                  class="progress-bar bg-danger"
-                  role="progressbar"
-                  :style="{ width: unexpectedPercent + '%' }"
-                  :aria-valuenow="unexpectedPercent"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                />
-                <div
-                  class="progress-bar bg-success"
-                  role="progressbar"
-                  :style="{ width: goalSavingsPercent + '%' }"
-                  :aria-valuenow="goalSavingsPercent"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                />
+
+            <div v-if="unexpectedThisMonth.length" class="expenses-chart-panel mb-3">
+              <div class="expenses-chart-panel__head">
+                <h4 class="expenses-chart-panel__title">By category</h4>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Bar chart metric">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    :class="{ active: barMetric === 'amount' }"
+                    @click="barMetric = 'amount'"
+                  >
+                    Amount
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    :class="{ active: barMetric === 'count' }"
+                    @click="barMetric = 'count'"
+                  >
+                    Count
+                  </button>
+                </div>
               </div>
+              <UnexpectedExpensesBarChart :segments="unexpectedBarSegments" :metric="barMetric" />
             </div>
 
-            <h4 class="h6 card-title mt-4 pt-3 border-top mb-2">Recent goal savings</h4>
-            <ul v-if="recentGoalContributions.length" class="list-unstyled mb-0 small">
+            <h4 v-if="recentUnexpected.length" class="expenses-activity-heading h6 mb-2">
+              Recent
+            </h4>
+            <ul v-if="recentUnexpected.length" class="expense-activity-list list-unstyled mb-0">
+              <li
+                v-for="tx in recentUnexpected"
+                :key="tx.id"
+                class="expense-activity-item"
+              >
+                <span
+                  class="expense-activity-item__swatch"
+                  :style="{ background: txCategoryColor(tx, FUND_COLORS.unexpected) }"
+                />
+                <div class="expense-activity-item__main">
+                  <span class="expense-activity-item__title">
+                    {{ tx.description || 'Unexpected expense' }}
+                  </span>
+                  <span class="expense-activity-item__meta">{{ tx.date }}</span>
+                </div>
+                <div class="expense-activity-item__amounts">
+                  <span class="expense-activity-item__total">{{ formatMoney(tx.amount) }}</span>
+                  <span
+                    v-if="Math.abs(txMonthImpact(tx) - tx.amount) > 0.009"
+                    class="expense-activity-item__impact"
+                  >
+                    {{ formatMoney(txMonthImpact(tx)) }}/mo
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </CollapsibleSection>
+        </div>
+
+        <div class="col-12">
+          <CollapsibleSection
+            class="expenses-panel expenses-panel--goals"
+            title="Goal savings"
+            :meta="
+              goalContributions.length
+                ? `${goalContributions.length} logged · ${formatMoney(totalGoalSavingsRecorded)} this month`
+                : 'None yet'
+            "
+            :default-expanded="false"
+            storage-key="expenses-goal-savings"
+          >
+            <p class="expenses-panel__intro small text-muted mb-3">
+              Amounts from <strong>Record savings</strong> on the Goals page.
+            </p>
+            <ul
+              v-if="recentGoalContributions.length"
+              class="expense-activity-list list-unstyled mb-0"
+            >
               <li
                 v-for="tx in recentGoalContributions"
                 :key="tx.id"
-                class="d-flex justify-content-between border-bottom py-1"
+                class="expense-activity-item"
               >
-                <div>
-                  <div>{{ tx.description || 'Goal savings' }}</div>
-                  <div class="text-muted">
+                <span
+                  class="expense-activity-item__swatch"
+                  :style="{ background: FUND_COLORS.goalSavings }"
+                />
+                <div class="expense-activity-item__main">
+                  <span class="expense-activity-item__title">
+                    {{ tx.description || 'Goal savings' }}
+                  </span>
+                  <span class="expense-activity-item__meta">
                     {{ tx.date }}
                     <span v-if="tx.goalId != null && goalById.get(tx.goalId)">
                       · {{ goalById.get(tx.goalId)!.name }}
                     </span>
-                  </div>
+                  </span>
                 </div>
-                <div class="text-end">
-                  <div>{{ tx.amount.toFixed(2) }}</div>
+                <div class="expense-activity-item__amounts">
+                  <span class="expense-activity-item__total">{{ formatMoney(tx.amount) }}</span>
+                  <span
+                    v-if="Math.abs(txMonthImpact(tx) - tx.amount) > 0.009"
+                    class="expense-activity-item__impact"
+                  >
+                    {{ formatMoney(txMonthImpact(tx)) }}/mo
+                  </span>
                 </div>
               </li>
             </ul>
-            <p v-else class="small text-muted mb-0">No recent goal savings.</p>
+            <p v-else class="expenses-panel__empty small mb-0">
+              No goal savings recorded on this budget yet.
+            </p>
+          </CollapsibleSection>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    class="modal fade"
+    id="addPurchaseModal"
+    tabindex="-1"
+    aria-labelledby="addPurchaseModalLabel"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 id="addPurchaseModalLabel" class="modal-title">Log purchase</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" />
+        </div>
+        <form @submit.prevent="addPurchase">
+          <div class="modal-body row g-3">
+            <div class="col-12">
+              <label class="form-label">
+                Line item
+                <select v-model="purchaseSubcategoryId" class="form-select" required>
+                  <option :value="null" disabled>Select a line item</option>
+                  <template v-for="cat in categories" :key="cat.id">
+                    <option
+                      v-for="sub in groupedSubcategories[cat.id] || []"
+                      :key="sub.id"
+                      :value="sub.id"
+                    >
+                      {{ cat.label }} · {{ sub.label }}
+                    </option>
+                  </template>
+                </select>
+              </label>
+            </div>
+            <div class="col-6">
+              <label class="form-label">
+                Amount
+                <input
+                  v-model.number="purchaseAmount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="form-control"
+                  required
+                />
+              </label>
+            </div>
+            <div class="col-6">
+              <label class="form-label">
+                Spread over (months)
+                <input
+                  v-model.number="purchaseSpreadMonths"
+                  type="number"
+                  min="1"
+                  max="60"
+                  class="form-control"
+                />
+              </label>
+            </div>
+            <div v-if="purchaseSpreadPreview != null" class="col-12">
+              <p class="small expense-monthly-impact mb-0">
+                This month’s impact:
+                <strong>{{ formatMoney(purchaseSpreadPreview) }}/mo</strong>
+              </p>
+            </div>
+            <div class="col-12">
+              <label class="form-label">
+                Note
+                <input
+                  v-model="purchaseLabel"
+                  type="text"
+                  class="form-control"
+                  placeholder="What you bought"
+                />
+              </label>
+            </div>
           </div>
-        </section>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save purchase</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
@@ -518,6 +842,27 @@ async function addUnexpected() {
                 Stored on your first line item under this category (see Budgets).
               </p>
             </div>
+            <div class="col-6">
+              <label class="form-label">
+                Spread over (months)
+                <input
+                  v-model.number="spreadMonths"
+                  type="number"
+                  min="1"
+                  max="60"
+                  step="1"
+                  class="form-control"
+                  placeholder="1"
+                />
+              </label>
+            </div>
+            <div v-if="spreadPreview != null" class="col-12">
+              <p class="small expense-monthly-impact mb-0">
+                This month’s impact:
+                <strong>{{ formatMoney(spreadPreview) }}/mo</strong>
+                from {{ formatMoney(amount ?? 0) }} total
+              </p>
+            </div>
             <div class="col-12">
               <label class="form-label">
                 Label
@@ -535,7 +880,7 @@ async function addUnexpected() {
               Cancel
             </button>
             <button class="btn btn-success" type="submit">
-              Add expense
+              Add unexpected expense
             </button>
           </div>
         </form>

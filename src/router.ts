@@ -8,12 +8,14 @@ import ExpensesView from './views/ExpensesView.vue';
 import ExtraIncomeView from './views/ExtraIncomeView.vue';
 import CardsView from './views/CardsView.vue';
 import BudgetRecordsView from './views/BudgetRecordsView.vue';
+import BudgetHistoryView from './views/BudgetHistoryView.vue';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: DashboardView },
   { path: '/budgets', component: BudgetsView },
   { path: '/budget-records', component: BudgetRecordsView },
+  { path: '/budget-history', component: BudgetHistoryView },
   { path: '/transactions', component: TransactionsView },
   { path: '/goals', component: GoalsView },
   { path: '/expenses', component: ExpensesView },

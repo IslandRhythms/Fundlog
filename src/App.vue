@@ -19,6 +19,7 @@ const navSections: NavSection[] = [
     items: [
       { path: '/budgets', label: 'Budgets' },
       { path: '/budget-records', label: 'Budget Records' },
+      { path: '/budget-history', label: 'Budget History' },
     ],
   },
   {

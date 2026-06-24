@@ -53,10 +53,17 @@ export interface BudgetSubcategory {
   minAmount?: number | null;
   maxAmount?: number | null;
   isFlexible: number;
+  /** Total cost spread evenly across this many months (default 1). */
+  spreadMonths: number;
+  /** First calendar month the spread applies (YYYY-MM); used when spreadMonths > 1. */
+  spreadStartMonth: string | null;
   sortOrder: number;
 }
 
 export type TransactionSource = 'manual' | 'csv' | 'ocr';
+
+/** Manual spending type: purchase = logged against a line item; unexpected = unplanned. */
+export type TransactionEntryKind = 'purchase' | 'unexpected';
 
 export interface Transaction {
   id: number;
@@ -65,10 +72,13 @@ export interface Transaction {
   subcategoryId: number | null;
   date: string; // ISO date
   amount: number;
+  /** Total amount spread evenly across this many months from the transaction date (default 1). */
+  spreadMonths: number;
   merchant: string | null;
   description: string | null;
   source: TransactionSource;
   goalId: number | null;
+  entryKind: TransactionEntryKind | null;
   createdAt: string;
   updatedAt: string;
 }

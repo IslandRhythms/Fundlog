@@ -332,10 +332,40 @@ ipcMain.handle(
       minAmount?: number | null;
       maxAmount?: number | null;
       isFlexible: boolean;
+      spreadMonths?: number;
+      spreadStartMonth?: string | null;
       sortOrder?: number;
     },
   ) => {
     return CategoryRepository.createSubcategory(args);
+  },
+);
+
+ipcMain.handle(
+  'subcategory:update',
+  (
+    _event,
+    args: {
+      id: number;
+      budgetId: number;
+      label: string;
+      targetPercent?: number | null;
+      targetAmount?: number | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
+      isFlexible: boolean;
+      spreadMonths?: number;
+      spreadStartMonth?: string | null;
+    },
+  ) => {
+    return CategoryRepository.updateSubcategory(args);
+  },
+);
+
+ipcMain.handle(
+  'subcategory:delete',
+  (_event, args: { id: number; budgetId: number }) => {
+    return CategoryRepository.deleteSubcategory(args);
   },
 );
 
@@ -350,6 +380,13 @@ ipcMain.handle(
   'transaction:listUnexpected',
   (_event, args: { profileId: number; budgetId: number }) => {
     return TransactionRepository.listUnexpected(args.profileId, args.budgetId);
+  },
+);
+
+ipcMain.handle(
+  'transaction:listPurchases',
+  (_event, args: { profileId: number; budgetId: number }) => {
+    return TransactionRepository.listPurchases(args.profileId, args.budgetId);
   },
 );
 
@@ -691,6 +728,23 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'transaction:createSingle',
+  (
+    _event,
+    args: {
+      profileId: number;
+      budgetId: number;
+      date: string;
+      amount: number;
+      merchant?: string | null;
+      description?: string | null;
+    },
+  ) => {
+    return TransactionRepository.createSingle(args);
+  },
+);
+
+ipcMain.handle(
   'transaction:createManual',
   (
     _event,
@@ -702,6 +756,8 @@ ipcMain.handle(
       amount: number;
       description?: string | null;
       goalId?: number | null;
+      spreadMonths?: number;
+      entryKind?: 'purchase' | 'unexpected' | null;
     },
   ) => {
     return TransactionRepository.createManual(args);

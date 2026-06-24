@@ -104,10 +104,32 @@ export const api = {
       label: string;
       targetPercent?: number | null;
       targetAmount?: number | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
       isFlexible: boolean;
+      spreadMonths?: number;
+      spreadStartMonth?: string | null;
       sortOrder?: number;
     }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
       ipcRenderer.invoke('subcategory:create', input),
+    update: async (input: {
+      id: number;
+      budgetId: number;
+      label: string;
+      targetPercent?: number | null;
+      targetAmount?: number | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
+      isFlexible: boolean;
+      spreadMonths?: number;
+      spreadStartMonth?: string | null;
+    }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
+      ipcRenderer.invoke('subcategory:update', input),
+    delete: async (input: {
+      id: number;
+      budgetId: number;
+    }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
+      ipcRenderer.invoke('subcategory:delete', input),
   },
   transaction: {
     listByBudget: async (
@@ -120,6 +142,11 @@ export const api = {
       budgetId: number,
     ): Promise<Transaction[]> =>
       ipcRenderer.invoke('transaction:listUnexpected', { profileId, budgetId }),
+    listPurchases: async (
+      profileId: number,
+      budgetId: number,
+    ): Promise<Transaction[]> =>
+      ipcRenderer.invoke('transaction:listPurchases', { profileId, budgetId }),
     listGoalContributions: async (
       profileId: number,
       budgetId: number,
@@ -133,7 +160,17 @@ export const api = {
       amount: number;
       description?: string | null;
       goalId?: number | null;
+      spreadMonths?: number;
+      entryKind?: 'purchase' | 'unexpected' | null;
     }): Promise<Transaction> => ipcRenderer.invoke('transaction:createManual', input),
+    createSingle: async (input: {
+      profileId: number;
+      budgetId: number;
+      date: string;
+      amount: number;
+      merchant?: string | null;
+      description?: string | null;
+    }): Promise<Transaction> => ipcRenderer.invoke('transaction:createSingle', input),
     spendSummaryForBudget: async (
       budgetId: number,
     ): Promise<{ totalAmount: number; count: number }> =>

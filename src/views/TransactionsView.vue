@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
+import { formatMoney as formatMoneyExact } from '../shared/formatMoney';
 import type { Transaction, Receipt } from '../shared/types';
 
 const domain = useDomainStore();
 const router = useRouter();
+const toast = useToast();
 
 const loading = ref(false);
 const receiptMap = ref<Record<number, Receipt[]>>({});
@@ -16,6 +19,21 @@ const statusMessage = ref<string | null>(null);
 const rawCsv = ref('');
 const importStatus = ref<string | null>(null);
 const exportStatus = ref<string | null>(null);
+
+const newDate = ref(new Date().toISOString().slice(0, 10));
+const newAmount = ref<number | null>(null);
+const newMerchant = ref('');
+const newDescription = ref('');
+const addingTransaction = ref(false);
+
+const canAddTransaction = computed(
+  () =>
+    !!domain.activeProfileId &&
+    !!domain.activeBudgetId &&
+    !!newDate.value &&
+    newAmount.value != null &&
+    newAmount.value > 0,
+);
 
 const transactions = computed(() =>
   [...domain.transactions].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -72,9 +90,9 @@ async function ensureDataLoaded() {
   try {
     if (!domain.activeProfileId) {
       await domain.loadProfiles();
-    } else {
-      await domain.loadBudgets();
     }
+    await domain.loadBudgets();
+    await domain.loadTransactions();
   } finally {
     loading.value = false;
   }
@@ -176,7 +194,39 @@ async function loadReceipts(tx: Transaction) {
 }
 
 function formatAmount(amount: number) {
-  return amount.toFixed(2);
+  const code = domain.profiles.find((p) => p.id === domain.activeProfileId)?.currencyCode ?? 'USD';
+  return formatMoneyExact(amount, code);
+}
+
+function resetAddForm() {
+  newDate.value = new Date().toISOString().slice(0, 10);
+  newAmount.value = null;
+  newMerchant.value = '';
+  newDescription.value = '';
+}
+
+async function addTransaction() {
+  if (!canAddTransaction.value || !domain.activeProfileId || !domain.activeBudgetId) return;
+  addingTransaction.value = true;
+  try {
+    await window.fundlog.transaction.createSingle({
+      profileId: domain.activeProfileId,
+      budgetId: domain.activeBudgetId,
+      date: newDate.value,
+      amount: newAmount.value!,
+      merchant: newMerchant.value.trim() || null,
+      description: newDescription.value.trim() || null,
+    });
+    await domain.loadTransactions();
+    resetAddForm();
+    hideBsModal('addTransactionModal');
+    toast.success('Transaction added.');
+  } catch (err) {
+    console.error(err);
+    toast.error('Could not add transaction.');
+  } finally {
+    addingTransaction.value = false;
+  }
 }
 
 async function runOcr(tx: Transaction, receipt: Receipt) {
@@ -220,10 +270,23 @@ function goTo(path: string) {
   <div class="view transactions-view container-fluid">
     <h2 class="mb-2">Transactions</h2>
     <p class="view-intro mb-3">
-      Use Import or Export when you need CSV; otherwise review activity and receipts below.
+      Add transactions one at a time, or use Import / Export when you need CSV.
+    </p>
+
+    <p v-if="!domain.activeBudget" class="status-text mb-3">
+      Select a budget to add or view transactions.
     </p>
 
     <div class="mb-4 d-flex flex-wrap gap-2 align-items-center">
+      <button
+        type="button"
+        class="btn btn-sm btn-primary"
+        data-bs-toggle="modal"
+        data-bs-target="#addTransactionModal"
+        :disabled="!domain.activeBudgetId"
+      >
+        Add transaction…
+      </button>
       <button
         type="button"
         class="btn btn-sm btn-outline-primary"
@@ -252,7 +315,7 @@ function goTo(path: string) {
     <h3 class="h5 mb-3">Activity</h3>
     <LoadingView v-if="loading" class="mb-3" message="Loading transactions…" />
     <p v-else-if="!domain.transactions.length" class="status-text">
-      No transactions yet. Use Import CSV… or add activity from the Expenses view.
+      No transactions yet. Use Add transaction… or Import CSV… above.
     </p>
 
     <div v-if="transactions.length" class="transactions-table-wrapper mt-2">
@@ -334,6 +397,81 @@ function goTo(path: string) {
     <p v-if="statusMessage" class="status-text mt-2">
       {{ statusMessage }}
     </p>
+  </div>
+
+  <div
+    id="addTransactionModal"
+    class="modal fade"
+    tabindex="-1"
+    aria-labelledby="addTransactionModalLabel"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 id="addTransactionModalLabel" class="modal-title">Add transaction</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" />
+        </div>
+        <form @submit.prevent="addTransaction">
+          <div class="modal-body row g-3">
+            <div class="col-6">
+              <label class="form-label">
+                Date
+                <input v-model="newDate" type="date" class="form-control" required />
+              </label>
+            </div>
+            <div class="col-6">
+              <label class="form-label">
+                Amount
+                <input
+                  v-model.number="newAmount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="form-control"
+                  placeholder="0.00"
+                  required
+                />
+              </label>
+            </div>
+            <div class="col-12">
+              <label class="form-label">
+                Merchant
+                <input
+                  v-model="newMerchant"
+                  type="text"
+                  class="form-control"
+                  placeholder="Store or payee"
+                />
+              </label>
+            </div>
+            <div class="col-12">
+              <label class="form-label">
+                Description
+                <input
+                  v-model="newDescription"
+                  type="text"
+                  class="form-control"
+                  placeholder="What it was for"
+                />
+              </label>
+            </div>
+            <div class="col-12">
+              <p class="small text-muted mb-0">
+                Saved to the active budget. For purchases or unexpected expenses tied to your plan,
+                use <a href="#" @click.prevent="goTo('/expenses')">Expenses</a>.
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary" :disabled="!canAddTransaction || addingTransaction">
+              {{ addingTransaction ? 'Saving…' : 'Add transaction' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <div

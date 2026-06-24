@@ -88,7 +88,31 @@ interface Window {
         minAmount?: number | null;
         maxAmount?: number | null;
         isFlexible: boolean;
+        spreadMonths?: number;
+        spreadStartMonth?: string | null;
         sortOrder?: number;
+      }): Promise<{
+        categories: import('./shared/types').BudgetCategory[];
+        subcategories: import('./shared/types').BudgetSubcategory[];
+      }>;
+      update(input: {
+        id: number;
+        budgetId: number;
+        label: string;
+        targetPercent?: number | null;
+        targetAmount?: number | null;
+        minAmount?: number | null;
+        maxAmount?: number | null;
+        isFlexible: boolean;
+        spreadMonths?: number;
+        spreadStartMonth?: string | null;
+      }): Promise<{
+        categories: import('./shared/types').BudgetCategory[];
+        subcategories: import('./shared/types').BudgetSubcategory[];
+      }>;
+      delete(input: {
+        id: number;
+        budgetId: number;
       }): Promise<{
         categories: import('./shared/types').BudgetCategory[];
         subcategories: import('./shared/types').BudgetSubcategory[];
@@ -100,6 +124,10 @@ interface Window {
         budgetId: number | null
       ): Promise<import('./shared/types').Transaction[]>;
       listUnexpected(
+        profileId: number,
+        budgetId: number
+      ): Promise<import('./shared/types').Transaction[]>;
+      listPurchases(
         profileId: number,
         budgetId: number
       ): Promise<import('./shared/types').Transaction[]>;
@@ -115,6 +143,16 @@ interface Window {
         amount: number;
         description?: string | null;
         goalId?: number | null;
+        spreadMonths?: number;
+        entryKind?: 'purchase' | 'unexpected' | null;
+      }): Promise<import('./shared/types').Transaction>;
+      createSingle(input: {
+        profileId: number;
+        budgetId: number;
+        date: string;
+        amount: number;
+        merchant?: string | null;
+        description?: string | null;
       }): Promise<import('./shared/types').Transaction>;
       spendSummaryForBudget(
         budgetId: number,
