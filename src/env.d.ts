@@ -142,6 +142,7 @@ interface Window {
         date: string;
         amount: number;
         description?: string | null;
+        merchant?: string | null;
         goalId?: number | null;
         spreadMonths?: number;
         entryKind?: 'purchase' | 'unexpected' | null;

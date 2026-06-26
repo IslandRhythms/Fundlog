@@ -7,12 +7,15 @@ import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.v
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import BudgetPieCompare from '../components/BudgetPieCompare.vue';
 import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
+import VendorPicker from '../components/VendorPicker.vue';
+import CategoryImpactList from '../components/CategoryImpactList.vue';
 import {
   computePlannedExpenseBarSegments,
   buildPieSegments,
   plannedAmountFromSub,
   plannedTotalFromSub,
 } from '../shared/plannedExpenseBar';
+import { computeCategoryImpact } from '../shared/categoryImpact';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
 import { calendarMonthNow } from '../shared/calendarMonth';
@@ -29,12 +32,23 @@ const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
 const purchaseTxs = ref<Transaction[]>([]);
 const goalContributionTxs = ref<Transaction[]>([]);
+
+/** Distinct vendor names ever used on this budget, for the purchase vendor picker. */
+const knownVendors = computed(() => {
+  const set = new Set<string>();
+  for (const tx of [...purchaseTxs.value, ...unexpectedTxs.value]) {
+    const raw = tx.merchant?.trim();
+    if (raw) set.add(raw);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
 const editingCategoryId = ref<number | null>(null);
 const categoryPanelExpanded = ref<Record<number, boolean>>({});
 const editingSubId = ref<number | null>(null);
 const loggingPurchaseSubId = ref<number | null>(null);
 const purchaseAmount = ref<number | null>(null);
 const purchaseLabel = ref('');
+const purchaseMerchant = ref('');
 const purchaseSpreadMonths = ref(1);
 const newLabel = ref('');
 const newType = ref<'fixed' | 'variable'>('fixed');
@@ -190,6 +204,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
+    purchaseTxs.value,
     goalContributionTxs.value,
     planningMonthIncome.value,
     viewingMonth,
@@ -198,6 +213,33 @@ const plannedBarResult = computed(() =>
 
 const headroom = computed(() =>
   computeBudgetHeadroom(categories.value, plannedBarResult.value, planningMonthIncome.value),
+);
+
+const categoryImpact = computed(() =>
+  computeCategoryImpact(
+    categories.value,
+    groupedSubcategories.value,
+    subcategories.value,
+    purchaseTxs.value,
+    unexpectedTxs.value,
+    viewingMonth,
+  ),
+);
+
+const anyCategoryImpact = computed(() =>
+  categoryImpact.value.some((row) => row.extra > 0),
+);
+
+const totalExtraSpend = computed(() =>
+  categoryImpact.value.reduce((sum, row) => sum + row.extra, 0),
+);
+
+/** Uncommitted leftover before purchases/unexpected: income − planned − goal savings. */
+const uncommittedPool = computed(
+  () =>
+    planningMonthIncome.value -
+    plannedBarResult.value.totalPlanned -
+    plannedBarResult.value.totalGoalSavings,
 );
 
 const pieSegments = computed(() =>
@@ -237,6 +279,7 @@ function cancelSubForm() {
   loggingPurchaseSubId.value = null;
   purchaseAmount.value = null;
   purchaseLabel.value = '';
+  purchaseMerchant.value = '';
   purchaseSpreadMonths.value = 1;
   resetSubForm();
 }
@@ -259,6 +302,7 @@ async function submitPurchase(sub: BudgetSubcategory) {
       date: now.toISOString().slice(0, 10),
       amount: purchaseAmount.value,
       description: purchaseLabel.value.trim() || sub.label,
+      merchant: purchaseMerchant.value.trim() || null,
       spreadMonths: Math.max(1, Math.floor(purchaseSpreadMonths.value || 1)),
       entryKind: 'purchase',
     });
@@ -468,6 +512,17 @@ async function submitSubcategory(category: BudgetCategory) {
                 </div>
               </div>
               <div class="budget-stat">
+                <div class="budget-stat__label">Purchases</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalPurchases) }}
+                </div>
+                <div v-if="planningMonthIncome && plannedBarResult.totalPurchases" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalPurchases / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+              <div class="budget-stat">
                 <div class="budget-stat__label">Unexpected</div>
                 <div class="budget-stat__value">
                   {{ formatMoney(plannedBarResult.totalUnexpected) }}
@@ -504,12 +559,38 @@ async function submitSubcategory(category: BudgetCategory) {
               empty-hint="Add planned amounts, unexpected expenses, or goal savings to see spending by category."
             />
             <p class="small mt-3 mb-0">
-              Unexpected expenses from
+              Purchases and unexpected expenses from
               <RouterLink to="/expenses">Expenses</RouterLink>
               and goal savings from
               <RouterLink to="/goals">Goals</RouterLink>
               count toward this month when spread across months.
             </p>
+        </CollapsibleSection>
+      </div>
+
+      <div class="col-12">
+        <CollapsibleSection
+          class="budgets-planning-panel expenses-panel--impact"
+          title="Where the plan adjusts"
+          :meta="
+            anyCategoryImpact
+              ? `${formatMoney(totalExtraSpend)} extra · ${monthLabel}`
+              : 'No extra spend this month'
+          "
+          :default-expanded="false"
+          storage-key="budgets-category-impact"
+        >
+          <p class="small text-muted mb-3">
+            Purchases and unexpected expenses are paid out of your uncommitted leftover (income
+            after planned amounts and goal savings). This shows which categories are eating it and
+            how much is still left.
+          </p>
+          <CategoryImpactList
+            :rows="categoryImpact"
+            :currency-code="currencyCode()"
+            :pool="uncommittedPool"
+            empty-hint="Log a purchase or unexpected expense to see where your leftover goes."
+          />
         </CollapsibleSection>
       </div>
 
@@ -746,6 +827,16 @@ async function submitSubcategory(category: BudgetCategory) {
                             type="text"
                             class="form-control form-control-sm"
                             placeholder="What you bought"
+                          />
+                        </label>
+                      </div>
+                      <div class="category-line-form__full">
+                        <label class="form-label d-block">
+                          Vendor / business
+                          <VendorPicker
+                            v-model="purchaseMerchant"
+                            :vendors="knownVendors"
+                            size="sm"
                           />
                         </label>
                       </div>

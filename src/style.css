@@ -1089,6 +1089,14 @@ html {
   color: color-mix(in srgb, var(--card-text) 55%, var(--muted));
 }
 
+.dashboard-activity-row__kind--purchase {
+  color: var(--fund-purchase);
+}
+
+.dashboard-activity-row__kind--unexpected {
+  color: var(--fund-unexpected);
+}
+
 .dashboard-activity-row__detail {
   font-weight: 500;
   text-transform: none;
@@ -2430,6 +2438,144 @@ html {
   color: #f87171;
 }
 
+.spend-tier__toggle {
+  margin-top: 0.5rem;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+  cursor: pointer;
+}
+
+.spend-tier__toggle:hover {
+  text-decoration: underline;
+}
+
+.spend-tier__lines {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.spend-tier__line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+}
+
+.spend-tier__line-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--card-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spend-tier__line-swatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.spend-tier__line-amt {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.spend-tier__drill {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.spend-tier__spend {
+  color: var(--card-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.spend-tier__spend-purchase {
+  color: var(--fund-purchase);
+  font-weight: 600;
+}
+
+.spend-tier__spend-unexpected {
+  color: var(--fund-unexpected);
+  font-weight: 600;
+}
+
+.spend-tier__spend-block {
+  margin-top: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border);
+}
+
+/* Shared list of individual purchases / unexpected expenses behind a total. */
+.impact-txn-list {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.impact-txn {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+}
+
+.impact-txn__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.impact-txn__dot--purchase {
+  background: var(--fund-purchase);
+}
+
+.impact-txn__dot--unexpected {
+  background: var(--fund-unexpected);
+}
+
+.impact-txn__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.impact-txn__label {
+  color: var(--card-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.impact-txn__meta {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.impact-txn__amt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--card-text);
+  white-space: nowrap;
+}
+
 .spend-tier-connector {
   width: 2px;
   height: 10px;
@@ -3222,6 +3368,355 @@ html {
 
 .expenses-panel--goals.collapsible-section {
   border-top-color: color-mix(in srgb, var(--fund-savings) 45%, var(--card-border));
+}
+
+.expenses-panel--vendor.collapsible-section {
+  border-top-color: color-mix(in srgb, var(--accent) 45%, var(--card-border));
+}
+
+.expenses-panel__highlight--vendor {
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--accent) 18%);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--card-border));
+}
+
+.expense-activity-item__vendor {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 70%, var(--card-text));
+}
+
+.expenses-vendor-scope {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.expenses-panel--impact.collapsible-section {
+  border-top-color: color-mix(in srgb, var(--accent) 45%, var(--card-border));
+}
+
+.budget-impact-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.budget-impact-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.budget-impact-legend__swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 3px;
+}
+
+.budget-impact-legend__swatch--purchase {
+  background: var(--fund-purchase);
+}
+
+.budget-impact-legend__swatch--unexpected {
+  background: var(--fund-unexpected);
+}
+
+.budget-impact-legend__swatch--planned {
+  background: color-mix(in srgb, var(--card-text) 45%, var(--muted));
+}
+
+.budget-impact-legend__marker {
+  width: 2px;
+  height: 0.85rem;
+  border-radius: 1px;
+  background: var(--text-h);
+}
+
+.budget-impact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.budget-impact-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.budget-impact-item__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.budget-impact-item__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-h);
+  min-width: 0;
+}
+
+.budget-impact-item__swatch {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.budget-impact-item__values {
+  font-size: 0.8rem;
+  color: var(--card-text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.budget-impact-item__values strong {
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-impact-item__of {
+  color: var(--muted);
+}
+
+.budget-impact-item__bar {
+  position: relative;
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-bg) 78%, var(--muted) 22%);
+  overflow: hidden;
+}
+
+.budget-impact-item--over .budget-impact-item__bar {
+  background: color-mix(in srgb, var(--card-bg) 70%, var(--fund-over, #ef4444) 30%);
+}
+
+.budget-impact-item__seg {
+  height: 100%;
+  min-width: 2px;
+}
+
+.budget-impact-item__seg--purchase {
+  background: var(--fund-purchase);
+}
+
+.budget-impact-item__seg--unexpected {
+  background: var(--fund-unexpected);
+}
+
+.budget-impact-item__marker {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text-h);
+  border-radius: 1px;
+  transform: translateX(-1px);
+}
+
+.budget-impact-item__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.72rem;
+}
+
+.budget-impact-item__toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+  cursor: pointer;
+}
+
+.budget-impact-item__toggle:hover {
+  text-decoration: underline;
+}
+
+.budget-impact-item__chip {
+  font-weight: 700;
+}
+
+.budget-impact-item__chip--left {
+  color: #16a34a;
+}
+
+.budget-impact-item__chip--over {
+  color: #dc3545;
+}
+
+.budget-impact-item__chip--none {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 600;
+}
+
+[data-theme='dark'] .budget-impact-item__chip--left {
+  color: #4ade80;
+}
+
+[data-theme='dark'] .budget-impact-item__chip--over {
+  color: #f87171;
+}
+
+.budget-impact-item__chip--added {
+  color: var(--fund-purchase);
+}
+
+[data-theme='dark'] .budget-impact-item__chip--added {
+  color: color-mix(in srgb, var(--fund-purchase) 65%, white);
+}
+
+.category-impact-summary {
+  color: var(--card-text);
+}
+
+.category-impact-summary strong {
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.category-impact-summary__left {
+  color: #16a34a;
+}
+
+.category-impact-summary__over {
+  color: #dc3545;
+}
+
+[data-theme='dark'] .category-impact-summary__left {
+  color: #4ade80;
+}
+
+[data-theme='dark'] .category-impact-summary__over {
+  color: #f87171;
+}
+
+.pool-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--card-bg) 55%, #16a34a 22%);
+}
+
+.pool-bar--over {
+  background: color-mix(in srgb, var(--card-bg) 65%, var(--fund-over, #ef4444) 35%);
+}
+
+.pool-bar__seg {
+  height: 100%;
+  min-width: 2px;
+}
+
+.pool-bar__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.5rem;
+  color: var(--muted);
+}
+
+.pool-bar__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pool-bar__legend-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 3px;
+}
+
+.pool-bar__legend-swatch--left {
+  background: color-mix(in srgb, var(--card-bg) 55%, #16a34a 22%);
+  border: 1px solid color-mix(in srgb, #16a34a 35%, var(--card-border));
+}
+
+.budget-impact-item__split {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vendor-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.vendor-breakdown-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.vendor-breakdown-item__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.vendor-breakdown-item__name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vendor-breakdown-item--none .vendor-breakdown-item__name {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.vendor-breakdown-item__amount {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.vendor-breakdown-item__bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--muted) 20%);
+  overflow: hidden;
+}
+
+.vendor-breakdown-item__bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 75%, var(--card-bg)),
+    var(--accent)
+  );
+  min-width: 2px;
+}
+
+.vendor-breakdown-item--none .vendor-breakdown-item__bar-fill {
+  background: color-mix(in srgb, var(--muted) 55%, var(--card-bg));
+}
+
+.vendor-breakdown-item__count {
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 
 .expenses-snapshot {

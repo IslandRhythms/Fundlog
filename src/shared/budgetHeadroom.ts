@@ -9,6 +9,10 @@ export type BucketRemainder = {
   targetAmount: number;
   committed: number;
   remaining: number;
+  planned: number;
+  purchases: number;
+  unexpected: number;
+  goalSavings: number;
 };
 
 export type SpendingTierStatus =
@@ -195,15 +199,20 @@ export function computeBudgetHeadroom(
   income: number,
 ): BudgetHeadroomResult {
   const committedTotal =
-    barResult.totalPlanned + barResult.totalUnexpected + barResult.totalGoalSavings;
+    barResult.totalPlanned +
+    barResult.totalUnexpected +
+    barResult.totalPurchases +
+    barResult.totalGoalSavings;
   const moneyLeft = income - committedTotal;
   const usedPct = income > 0 ? Math.min(100, (committedTotal / income) * 100) : 0;
 
   const buckets: BucketRemainder[] = categories.map((cat) => {
     const seg = segmentForCategory(barResult.categoryParts, cat.id);
-    const committed = seg
-      ? seg.planned + seg.unexpected + seg.goalSavings
-      : 0;
+    const planned = seg?.planned ?? 0;
+    const purchases = seg?.purchases ?? 0;
+    const unexpected = seg?.unexpected ?? 0;
+    const goalSavings = seg?.goalSavings ?? 0;
+    const committed = planned + purchases + unexpected + goalSavings;
     const targetAmount = income > 0 ? (income * cat.targetPercent) / 100 : 0;
     return {
       ruleKey: cat.ruleKey,
@@ -212,6 +221,10 @@ export function computeBudgetHeadroom(
       targetAmount,
       committed,
       remaining: targetAmount - committed,
+      planned,
+      purchases,
+      unexpected,
+      goalSavings,
     };
   });
 

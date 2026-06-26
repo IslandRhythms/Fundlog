@@ -7,8 +7,16 @@ import CollapsibleSection from '../components/CollapsibleSection.vue';
 import LoadingView from '../components/LoadingView.vue';
 import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
-import { computePlannedExpenseBarSegments, buildPieSegments } from '../shared/plannedExpenseBar';
+import {
+  computePlannedExpenseBarSegments,
+  buildPieSegments,
+  plannedAmountFromSub,
+  transactionMonthlyImpact,
+} from '../shared/plannedExpenseBar';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
+import { buildImpactTxn } from '../shared/categoryImpact';
+import type { ImpactTxn } from '../shared/categoryImpact';
+import type { TierLineItem, TierSpend } from '../components/MoneyLeftSummary.vue';
 import {
   goalProgressPctWithBudget,
   monthlyPlanTowardGoal,
@@ -34,6 +42,7 @@ const activeProfile = computed<Profile | null>(() => {
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
+const purchaseTxs = ref<Transaction[]>([]);
 const goalContributionTxs = ref<Transaction[]>([]);
 const goalAllocations = ref<GoalAllocation[]>([]);
 const loading = ref(false);
@@ -59,8 +68,12 @@ async function loadCategories() {
     const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = result.categories;
     subcategories.value = result.subcategories;
-    const [unexpected, goalContrib] = await Promise.all([
+    const [unexpected, purchases, goalContrib] = await Promise.all([
       window.fundlog.transaction.listUnexpected(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+      window.fundlog.transaction.listPurchases(
         domain.activeProfileId,
         activeBudget.value.id,
       ),
@@ -70,6 +83,7 @@ async function loadCategories() {
       ),
     ]);
     unexpectedTxs.value = unexpected;
+    purchaseTxs.value = purchases;
     goalContributionTxs.value = goalContrib;
   } finally {
     loading.value = false;
@@ -133,6 +147,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
+    purchaseTxs.value,
     goalContributionTxs.value,
     monthlyIncome.value,
     calendarMonthNow(),
@@ -151,6 +166,104 @@ const monthLabel = computed(() => {
 });
 
 const pieSegments = computed(() => buildPieSegments(plannedBarResult.value, monthlyIncome.value));
+
+type TierKey = 'wants' | 'needs' | 'savings';
+
+function tierKeyForRule(ruleKey: string): TierKey | null {
+  if (ruleKey === 'savingsDebt') return 'savings';
+  if (ruleKey === 'needs') return 'needs';
+  if (ruleKey === 'wants') return 'wants';
+  return null;
+}
+
+/** Planned line items (subcategories) grouped by spending tier. */
+const tierLineItems = computed<Partial<Record<TierKey, TierLineItem[]>>>(() => {
+  const month = calendarMonthNow();
+  const out: Record<TierKey, TierLineItem[]> = { wants: [], needs: [], savings: [] };
+
+  for (const cat of categories.value) {
+    const key = tierKeyForRule(cat.ruleKey);
+    if (!key) continue;
+    const subs = groupedSubcategories.value[cat.id] ?? [];
+    for (const sub of subs) {
+      const planned = plannedAmountFromSub(sub, month);
+      if (planned <= 0) continue;
+      out[key].push({ id: sub.id, label: sub.label, planned, color: cat.color });
+    }
+  }
+
+  for (const k of ['wants', 'needs', 'savings'] as const) {
+    out[k].sort((a, b) => b.planned - a.planned);
+  }
+  return out;
+});
+
+/**
+ * Actual spend per tier this month. Purchases/unexpected are logged at the category
+ * level, so they're summarised per tier rather than per line item.
+ */
+const tierSpend = computed<Partial<Record<TierKey, TierSpend>>>(() => {
+  const month = calendarMonthNow();
+  const subToTier: Record<number, TierKey> = {};
+  for (const cat of categories.value) {
+    const key = tierKeyForRule(cat.ruleKey);
+    if (!key) continue;
+    for (const sub of groupedSubcategories.value[cat.id] ?? []) {
+      subToTier[sub.id] = key;
+    }
+  }
+
+  const out: Record<TierKey, TierSpend> = {
+    wants: { purchases: 0, unexpected: 0 },
+    needs: { purchases: 0, unexpected: 0 },
+    savings: { purchases: 0, unexpected: 0 },
+  };
+
+  for (const tx of purchaseTxs.value) {
+    if (tx.subcategoryId == null) continue;
+    const key = subToTier[tx.subcategoryId];
+    if (!key) continue;
+    out[key].purchases += transactionMonthlyImpact(tx, month);
+  }
+  for (const tx of unexpectedTxs.value) {
+    if (tx.subcategoryId == null) continue;
+    const key = subToTier[tx.subcategoryId];
+    if (!key) continue;
+    out[key].unexpected += transactionMonthlyImpact(tx, month);
+  }
+  return out;
+});
+
+/** The individual purchase/unexpected entries behind each tier's spend, largest first. */
+const tierItems = computed<Partial<Record<TierKey, ImpactTxn[]>>>(() => {
+  const month = calendarMonthNow();
+  const subToTier: Record<number, TierKey> = {};
+  for (const cat of categories.value) {
+    const key = tierKeyForRule(cat.ruleKey);
+    if (!key) continue;
+    for (const sub of groupedSubcategories.value[cat.id] ?? []) {
+      subToTier[sub.id] = key;
+    }
+  }
+
+  const out: Record<TierKey, ImpactTxn[]> = { wants: [], needs: [], savings: [] };
+
+  const collect = (tx: Transaction, kind: 'purchase' | 'unexpected') => {
+    if (tx.subcategoryId == null) return;
+    const key = subToTier[tx.subcategoryId];
+    if (!key) return;
+    const item = buildImpactTxn(tx, kind, month);
+    if (item) out[key].push(item);
+  };
+
+  for (const tx of purchaseTxs.value) collect(tx, 'purchase');
+  for (const tx of unexpectedTxs.value) collect(tx, 'unexpected');
+
+  for (const k of ['wants', 'needs', 'savings'] as const) {
+    out[k].sort((a, b) => b.amount - a.amount);
+  }
+  return out;
+});
 
 const allocationTargetCaption = computed(() => {
   const b = activeBudget.value;
@@ -234,10 +347,19 @@ function goalSavingMatchedTarget(g: Goal): boolean {
 
 function activityKindLabel(tx: Transaction): string {
   if (tx.goalId != null) return 'Goal saving';
+  if (tx.entryKind === 'purchase') return 'Purchase';
+  if (tx.entryKind === 'unexpected') return 'Unexpected expense';
   if (tx.source === 'csv') return 'Imported expense';
   if (tx.source === 'ocr') return 'Receipt expense';
-  if (tx.source === 'manual' && tx.subcategoryId != null) return 'Unexpected expense';
+  if (tx.source === 'manual' && tx.subcategoryId != null) return 'Manual expense';
   return 'Manual entry';
+}
+
+function activityKindClass(tx: Transaction): string {
+  if (tx.goalId != null) return 'dashboard-activity-row__kind--saving';
+  if (tx.entryKind === 'purchase') return 'dashboard-activity-row__kind--purchase';
+  if (tx.entryKind === 'unexpected') return 'dashboard-activity-row__kind--unexpected';
+  return 'dashboard-activity-row__kind--expense';
 }
 
 function activityKindDetail(tx: Transaction): string | null {
@@ -269,6 +391,9 @@ function activityKindDetail(tx: Transaction): string | null {
             :headroom="headroom"
             :currency-code="activeProfile?.currencyCode ?? 'USD'"
             :month-label="monthLabel"
+            :tier-line-items="tierLineItems"
+            :tier-spend="tierSpend"
+            :tier-items="tierItems"
           />
         </CollapsibleSection>
       </div>
@@ -323,6 +448,10 @@ function activityKindDetail(tx: Transaction): string | null {
                     <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalPlanned) }}</div>
                   </div>
                   <div class="budget-stat">
+                    <div class="budget-stat__label">Purchases</div>
+                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalPurchases) }}</div>
+                  </div>
+                  <div class="budget-stat">
                     <div class="budget-stat__label">Unexpected</div>
                     <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalUnexpected) }}</div>
                   </div>
@@ -337,6 +466,7 @@ function activityKindDetail(tx: Transaction): string | null {
                         formatMoney(
                           plannedBarResult.totalPlanned +
                             plannedBarResult.totalUnexpected +
+                            plannedBarResult.totalPurchases +
                             plannedBarResult.totalGoalSavings,
                         )
                       }}
@@ -455,11 +585,7 @@ function activityKindDetail(tx: Transaction): string | null {
                     <span class="dashboard-activity-row__dot" aria-hidden="true">·</span>
                     <span
                       class="dashboard-activity-row__kind"
-                      :class="
-                        tx.goalId != null
-                          ? 'dashboard-activity-row__kind--saving'
-                          : 'dashboard-activity-row__kind--expense'
-                      "
+                      :class="activityKindClass(tx)"
                     >
                       {{ activityKindLabel(tx) }}
                     </span>

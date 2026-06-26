@@ -507,6 +507,7 @@ export const TransactionRepository = {
     date: string;
     amount: number;
     description?: string | null;
+    merchant?: string | null;
     goalId?: number | null;
     spreadMonths?: number;
     entryKind?: 'purchase' | 'unexpected' | null;
@@ -545,7 +546,7 @@ export const TransactionRepository = {
     const stmt = db().prepare(
       `INSERT INTO transactions
        (profile_id, budget_id, subcategory_id, date, amount, spread_months, merchant, description, source, goal_id, entry_kind, created_at, updated_at)
-       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, @spreadMonths, NULL, @description, 'manual', @goalId, @entryKind, @createdAt, @createdAt)`,
+       VALUES (@profileId, @budgetId, @subcategoryId, @date, @amount, @spreadMonths, @merchant, @description, 'manual', @goalId, @entryKind, @createdAt, @createdAt)`,
     );
     const result = stmt.run({
       profileId: input.profileId,
@@ -554,6 +555,7 @@ export const TransactionRepository = {
       date: input.date,
       amount: input.amount,
       spreadMonths,
+      merchant: input.merchant?.trim() || null,
       description: input.description ?? null,
       goalId,
       entryKind,

@@ -7,6 +7,9 @@ import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import UnexpectedExpensesBarChart from '../components/UnexpectedExpensesBarChart.vue';
+import VendorPicker from '../components/VendorPicker.vue';
+import CategoryImpactList from '../components/CategoryImpactList.vue';
+import { computeCategoryImpact } from '../shared/categoryImpact';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
@@ -34,11 +37,14 @@ const amount = ref<number | null>(null);
 const spreadMonths = ref(1);
 const categoryId = ref<number | null>(null);
 const label = ref('');
+const merchant = ref('');
 const purchaseAmount = ref<number | null>(null);
 const purchaseSpreadMonths = ref(1);
-const purchaseSubcategoryId = ref<number | null>(null);
+const purchaseCategoryId = ref<number | null>(null);
 const purchaseLabel = ref('');
+const purchaseMerchant = ref('');
 const barMetric = ref<'amount' | 'count'>('amount');
+const vendorScope = ref<'month' | 'lifetime'>('month');
 
 const activeBudget = computed(() => domain.activeBudget);
 
@@ -72,6 +78,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpected.value,
+    purchases.value,
     goalContributions.value,
     budgetIncome.value,
     viewingMonth,
@@ -314,6 +321,96 @@ const combinedPercent = computed(() => {
   return Math.min(100, (combinedTotal.value / budgetIncome.value) * 100);
 });
 
+type VendorRow = {
+  key: string;
+  name: string;
+  amount: number;
+  count: number;
+  hasVendor: boolean;
+};
+
+/**
+ * Purchases + unexpected spending grouped by vendor/business.
+ * 'month' uses each entry's spread-adjusted impact this calendar month;
+ * 'lifetime' uses the full recorded amount across all dates.
+ */
+const vendorBreakdown = computed<VendorRow[]>(() => {
+  const map = new Map<string, VendorRow>();
+  for (const tx of [...purchases.value, ...unexpected.value]) {
+    const value =
+      vendorScope.value === 'lifetime'
+        ? tx.amount
+        : transactionMonthlyImpact(tx, viewingMonth);
+    if (value <= 0) continue;
+    const raw = tx.merchant?.trim() ?? '';
+    const hasVendor = raw.length > 0;
+    const key = hasVendor ? raw.toLowerCase() : '__none__';
+    const existing = map.get(key);
+    if (existing) {
+      existing.amount += value;
+      existing.count += 1;
+    } else {
+      map.set(key, {
+        key,
+        name: hasVendor ? raw : 'No vendor',
+        amount: value,
+        count: 1,
+        hasVendor,
+      });
+    }
+  }
+  return [...map.values()].sort((a, b) => {
+    if (a.hasVendor !== b.hasVendor) return a.hasVendor ? -1 : 1;
+    return b.amount - a.amount;
+  });
+});
+
+const vendorScopeLabel = computed(() =>
+  vendorScope.value === 'lifetime' ? 'all time' : 'this month',
+);
+
+const vendorBreakdownMax = computed(() =>
+  vendorBreakdown.value.reduce((max, row) => Math.max(max, row.amount), 0),
+);
+
+const namedVendorCount = computed(
+  () => vendorBreakdown.value.filter((row) => row.hasVendor).length,
+);
+
+const topVendor = computed(
+  () => vendorBreakdown.value.find((row) => row.hasVendor) ?? null,
+);
+
+/** Distinct vendor names ever used, for the modal autocomplete. */
+const knownVendors = computed(() => {
+  const set = new Set<string>();
+  for (const tx of [...purchases.value, ...unexpected.value]) {
+    const raw = tx.merchant?.trim();
+    if (raw) set.add(raw);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
+
+const categoryBudgetImpact = computed(() =>
+  computeCategoryImpact(
+    categories.value,
+    groupedSubcategories.value,
+    subcategories.value,
+    purchases.value,
+    unexpected.value,
+    viewingMonth,
+  ),
+);
+
+const anyBudgetImpact = computed(() =>
+  categoryBudgetImpact.value.some((row) => row.extra > 0),
+);
+
+/** Uncommitted leftover before purchases/unexpected: income − planned − goal savings. */
+const uncommittedPool = computed(
+  () => budgetIncome.value - totalPlanned.value - totalGoalSavingsRecorded.value,
+);
+
 onMounted(async () => {
   await domain.loadProfiles();
   await domain.loadBudgets();
@@ -345,6 +442,7 @@ async function addUnexpected() {
       date,
       amount: amount.value,
       description: label.value.trim(),
+      merchant: merchant.value.trim() || null,
       spreadMonths: Math.max(1, Math.floor(spreadMonths.value || 1)),
       entryKind: 'unexpected',
     });
@@ -352,6 +450,7 @@ async function addUnexpected() {
     spreadMonths.value = 1;
     categoryId.value = null;
     label.value = '';
+    merchant.value = '';
     await loadData();
     hideBsModal('addUnexpectedModal');
   } catch (e) {
@@ -365,27 +464,34 @@ async function addPurchase() {
     !activeBudget.value ||
     !domain.activeProfileId ||
     !purchaseAmount.value ||
-    !purchaseSubcategoryId.value
+    !purchaseCategoryId.value
   )
     return;
+  const subcategoryId = firstSubcategoryIdForCategory(purchaseCategoryId.value);
+  if (subcategoryId == null) {
+    toast.error('Add at least one line item under this category on Budgets first.');
+    return;
+  }
+  const cat = categoryById.value[purchaseCategoryId.value];
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
-  const sub = subcategoryById.value[purchaseSubcategoryId.value];
   try {
     await window.fundlog.transaction.createManual({
       profileId: domain.activeProfileId,
       budgetId: activeBudget.value.id,
-      subcategoryId: purchaseSubcategoryId.value,
+      subcategoryId,
       date,
       amount: purchaseAmount.value,
-      description: purchaseLabel.value.trim() || sub?.label || 'Purchase',
+      description: purchaseLabel.value.trim() || cat?.label || 'Purchase',
+      merchant: purchaseMerchant.value.trim() || null,
       spreadMonths: Math.max(1, Math.floor(purchaseSpreadMonths.value || 1)),
       entryKind: 'purchase',
     });
     purchaseAmount.value = null;
     purchaseSpreadMonths.value = 1;
-    purchaseSubcategoryId.value = null;
+    purchaseCategoryId.value = null;
     purchaseLabel.value = '';
+    purchaseMerchant.value = '';
     await loadData();
     hideBsModal('addPurchaseModal');
     toast.success('Purchase logged.');
@@ -522,6 +628,104 @@ async function addPurchase() {
           </section>
         </div>
 
+        <div class="col-12">
+          <CollapsibleSection
+            class="expenses-panel expenses-panel--impact"
+            title="Budget impact by category"
+            :meta="
+              anyBudgetImpact
+                ? `Leftover spent by category · ${monthLabel}`
+                : 'No extra spend logged yet'
+            "
+            storage-key="expenses-budget-impact"
+          >
+            <p class="expenses-panel__intro small text-muted mb-2">
+              How this month’s <strong>purchases</strong> and <strong>unexpected</strong> spending
+              eat into your uncommitted leftover (income after planned and goal savings) — by category.
+            </p>
+            <CategoryImpactList
+              :rows="categoryBudgetImpact"
+              :currency-code="activeProfile?.currencyCode ?? 'USD'"
+              :pool="uncommittedPool"
+            />
+          </CollapsibleSection>
+        </div>
+
+        <div class="col-12">
+          <CollapsibleSection
+            class="expenses-panel expenses-panel--vendor"
+            title="Where it goes by vendor"
+            :meta="
+              namedVendorCount
+                ? `${namedVendorCount} vendor${namedVendorCount === 1 ? '' : 's'} ${vendorScopeLabel}`
+                : 'No vendors tagged'
+            "
+            storage-key="expenses-vendors"
+          >
+            <div class="expenses-vendor-scope mb-3">
+              <div
+                class="btn-group btn-group-sm"
+                role="group"
+                aria-label="Vendor breakdown time range"
+              >
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  :class="{ active: vendorScope === 'month' }"
+                  @click="vendorScope = 'month'"
+                >
+                  This month
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  :class="{ active: vendorScope === 'lifetime' }"
+                  @click="vendorScope = 'lifetime'"
+                >
+                  All time
+                </button>
+              </div>
+            </div>
+            <p
+              v-if="topVendor"
+              class="expenses-panel__highlight expenses-panel__highlight--vendor small mb-3"
+            >
+              Most spent at <strong>{{ topVendor.name }}</strong> —
+              {{ formatMoney(topVendor.amount) }} across {{ topVendor.count }}
+              order{{ topVendor.count === 1 ? '' : 's' }} {{ vendorScopeLabel }}.
+            </p>
+            <p v-else class="expenses-panel__empty small text-muted mb-3">
+              Add a <strong>vendor / business</strong> when logging purchases or unexpected
+              expenses to see how much goes to each place — like repeat trips to Raising Cane's.
+            </p>
+            <ul v-if="vendorBreakdown.length" class="vendor-breakdown-list list-unstyled mb-0">
+              <li
+                v-for="row in vendorBreakdown"
+                :key="row.key"
+                class="vendor-breakdown-item"
+                :class="{ 'vendor-breakdown-item--none': !row.hasVendor }"
+              >
+                <div class="vendor-breakdown-item__head">
+                  <span class="vendor-breakdown-item__name">{{ row.name }}</span>
+                  <span class="vendor-breakdown-item__amount">{{ formatMoney(row.amount) }}</span>
+                </div>
+                <div class="vendor-breakdown-item__bar" aria-hidden="true">
+                  <span
+                    class="vendor-breakdown-item__bar-fill"
+                    :style="{
+                      width:
+                        (vendorBreakdownMax ? (row.amount / vendorBreakdownMax) * 100 : 0) + '%',
+                    }"
+                  />
+                </div>
+                <span class="vendor-breakdown-item__count">
+                  {{ row.count }} order{{ row.count === 1 ? '' : 's' }} {{ vendorScopeLabel }}
+                </span>
+              </li>
+            </ul>
+          </CollapsibleSection>
+        </div>
+
         <div class="col-12 col-lg-6">
           <CollapsibleSection
             class="expenses-panel expenses-panel--purchase"
@@ -555,6 +759,9 @@ async function addPurchase() {
                     {{ tx.date }}
                     <span v-if="tx.subcategoryId != null && subcategoryById[tx.subcategoryId]">
                       · {{ subcategoryById[tx.subcategoryId].label }}
+                    </span>
+                    <span v-if="tx.merchant" class="expense-activity-item__vendor">
+                      · {{ tx.merchant }}
                     </span>
                   </span>
                 </div>
@@ -639,7 +846,12 @@ async function addPurchase() {
                   <span class="expense-activity-item__title">
                     {{ tx.description || 'Unexpected expense' }}
                   </span>
-                  <span class="expense-activity-item__meta">{{ tx.date }}</span>
+                  <span class="expense-activity-item__meta">
+                    {{ tx.date }}
+                    <span v-if="tx.merchant" class="expense-activity-item__vendor">
+                      · {{ tx.merchant }}
+                    </span>
+                  </span>
                 </div>
                 <div class="expense-activity-item__amounts">
                   <span class="expense-activity-item__total">{{ formatMoney(tx.amount) }}</span>
@@ -730,20 +942,17 @@ async function addPurchase() {
           <div class="modal-body row g-3">
             <div class="col-12">
               <label class="form-label">
-                Line item
-                <select v-model="purchaseSubcategoryId" class="form-select" required>
-                  <option :value="null" disabled>Select a line item</option>
-                  <template v-for="cat in categories" :key="cat.id">
-                    <option
-                      v-for="sub in groupedSubcategories[cat.id] || []"
-                      :key="sub.id"
-                      :value="sub.id"
-                    >
-                      {{ cat.label }} · {{ sub.label }}
-                    </option>
-                  </template>
+                Category
+                <select v-model="purchaseCategoryId" class="form-select" required>
+                  <option :value="null" disabled>Select a category</option>
+                  <option v-for="cat in categories" :key="cat.id" :value="cat.id">
+                    {{ cat.label }}
+                  </option>
                 </select>
               </label>
+              <p class="form-text small mb-0">
+                Stored on your first line item under this category (see Budgets).
+              </p>
             </div>
             <div class="col-6">
               <label class="form-label">
@@ -774,6 +983,15 @@ async function addPurchase() {
               <p class="small expense-monthly-impact mb-0">
                 This month’s impact:
                 <strong>{{ formatMoney(purchaseSpreadPreview) }}/mo</strong>
+              </p>
+            </div>
+            <div class="col-12">
+              <label class="form-label d-block">
+                Vendor / business
+                <VendorPicker v-model="purchaseMerchant" :vendors="knownVendors" />
+              </label>
+              <p class="form-text small mb-0">
+                Group repeat spending at the same place to see where your money goes.
               </p>
             </div>
             <div class="col-12">
@@ -873,6 +1091,15 @@ async function addPurchase() {
                   placeholder="Short description"
                 />
               </label>
+            </div>
+            <div class="col-12">
+              <label class="form-label d-block">
+                Vendor / business
+                <VendorPicker v-model="merchant" :vendors="knownVendors" />
+              </label>
+              <p class="form-text small mb-0">
+                Group repeat spending at the same place to see where your money goes.
+              </p>
             </div>
           </div>
           <div class="modal-footer">

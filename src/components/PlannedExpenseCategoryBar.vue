@@ -1,25 +1,63 @@
 <script setup lang="ts">
 import type { PlannedBarSeg } from '../shared/plannedExpenseBar';
+import { FUND_COLORS } from '../shared/fundColors';
 
-defineProps<{
+const props = defineProps<{
   categoryParts: PlannedBarSeg[];
   unallocatedBarPct: number;
   emptyHint: string;
   ariaLabel?: string;
 }>();
 
-function segmentTitle(seg: PlannedBarSeg): string {
-  const base = `${seg.label}: ${seg.planned.toLocaleString()} planned`;
-  const extra: string[] = [];
+type SubSeg = { key: string; color: string; widthPct: number; title: string };
+
+function segTotal(seg: PlannedBarSeg): number {
+  return seg.planned + seg.unexpected + seg.purchases + seg.goalSavings;
+}
+
+/** Split each category segment into planned / purchases / unexpected / goal savings slices. */
+function subSegments(seg: PlannedBarSeg): SubSeg[] {
+  const total = segTotal(seg);
+  if (total <= 0) return [];
+  const scale = seg.barWidthPct / total;
+  const out: SubSeg[] = [];
+  if (seg.planned > 0) {
+    out.push({
+      key: `${seg.categoryId}-planned`,
+      color: seg.color,
+      widthPct: seg.planned * scale,
+      title: `${seg.label}: ${seg.planned.toLocaleString()} planned`,
+    });
+  }
+  if (seg.purchases > 0) {
+    out.push({
+      key: `${seg.categoryId}-purchase`,
+      color: FUND_COLORS.purchase,
+      widthPct: seg.purchases * scale,
+      title: `${seg.label}: ${seg.purchases.toLocaleString()} purchases`,
+    });
+  }
   if (seg.unexpected > 0) {
-    extra.push(`${seg.unexpected.toLocaleString()} unexpected`);
+    out.push({
+      key: `${seg.categoryId}-unexpected`,
+      color: FUND_COLORS.unexpected,
+      widthPct: seg.unexpected * scale,
+      title: `${seg.label}: ${seg.unexpected.toLocaleString()} unexpected`,
+    });
   }
   if (seg.goalSavings > 0) {
-    extra.push(`${seg.goalSavings.toLocaleString()} goal savings`);
+    out.push({
+      key: `${seg.categoryId}-goal`,
+      color: FUND_COLORS.goalSavings,
+      widthPct: seg.goalSavings * scale,
+      title: `${seg.label}: ${seg.goalSavings.toLocaleString()} goal savings`,
+    });
   }
-  const tail = extra.length ? ` + ${extra.join(' + ')}` : '';
-  return `${base}${tail} (${seg.pctOfIncome.toFixed(1)}% of income)`;
+  return out;
 }
+
+const hasPurchases = () => props.categoryParts.some((s) => s.purchases > 0);
+const hasUnexpected = () => props.categoryParts.some((s) => s.unexpected > 0);
 </script>
 
 <template>
@@ -31,23 +69,25 @@ function segmentTitle(seg: PlannedBarSeg): string {
       role="img"
       :aria-label="ariaLabel ?? 'Spending by category as a share of income'"
     >
-      <div
-        v-for="seg in categoryParts"
-        :key="seg.categoryId"
-        role="presentation"
-        :style="{
-          width: seg.barWidthPct + '%',
-          backgroundColor: seg.color,
-          minWidth: seg.barWidthPct > 0 ? '2px' : '0',
-        }"
-        :title="segmentTitle(seg)"
-      />
+      <template v-for="seg in categoryParts" :key="seg.categoryId">
+        <div
+          v-for="sub in subSegments(seg)"
+          :key="sub.key"
+          role="presentation"
+          :style="{
+            width: sub.widthPct + '%',
+            backgroundColor: sub.color,
+            minWidth: sub.widthPct > 0 ? '2px' : '0',
+          }"
+          :title="sub.title"
+        />
+      </template>
       <div
         v-if="unallocatedBarPct > 0.05"
         role="presentation"
         class="planned-bar-unallocated"
         :style="{ width: unallocatedBarPct + '%' }"
-        title="Income not yet reflected in planned, unexpected, or goal savings"
+        title="Income not yet reflected in planned, purchases, unexpected, or goal savings"
       />
     </div>
     <div
@@ -73,7 +113,10 @@ function segmentTitle(seg: PlannedBarSeg): string {
         <span>
           {{ seg.label }} · {{ seg.pctOfIncome.toFixed(1) }}% income
           <span class="text-muted">
-            ({{ seg.planned.toLocaleString() }}
+            ({{ seg.planned.toLocaleString() }} planned
+            <template v-if="seg.purchases > 0">
+              + {{ seg.purchases.toLocaleString() }} purchases
+            </template>
             <template v-if="seg.unexpected > 0">
               + {{ seg.unexpected.toLocaleString() }} unexpected
             </template>
@@ -83,6 +126,22 @@ function segmentTitle(seg: PlannedBarSeg): string {
             )
           </span>
         </span>
+      </li>
+      <li v-if="hasPurchases()" class="d-flex align-items-center gap-1">
+        <span
+          class="rounded d-inline-block flex-shrink-0"
+          style="width: 8px; height: 8px"
+          :style="{ backgroundColor: FUND_COLORS.purchase }"
+        />
+        <span>Purchases</span>
+      </li>
+      <li v-if="hasUnexpected()" class="d-flex align-items-center gap-1">
+        <span
+          class="rounded d-inline-block flex-shrink-0"
+          style="width: 8px; height: 8px"
+          :style="{ backgroundColor: FUND_COLORS.unexpected }"
+        />
+        <span>Unexpected</span>
       </li>
       <li v-if="unallocatedBarPct > 0.05" class="d-flex align-items-center gap-1">
         <span

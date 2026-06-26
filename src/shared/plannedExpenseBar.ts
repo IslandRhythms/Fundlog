@@ -75,6 +75,7 @@ export type PlannedBarSeg = {
   pctOfIncome: number;
   planned: number;
   unexpected: number;
+  purchases: number;
   goalSavings: number;
 };
 
@@ -83,6 +84,7 @@ export type PlannedExpenseBarResult = {
   unallocatedBarPct: number;
   totalPlanned: number;
   totalUnexpected: number;
+  totalPurchases: number;
   totalGoalSavings: number;
   combinedOfIncomePct: number;
 };
@@ -104,6 +106,7 @@ export function computePlannedExpenseBarSegments(
   groupedSubcategories: Record<number, BudgetSubcategory[]>,
   subcategories: BudgetSubcategory[],
   unexpectedTxs: Transaction[],
+  purchaseTxs: Transaction[],
   goalContributionTxs: Transaction[],
   income: number,
   viewingMonth?: string,
@@ -122,11 +125,29 @@ export function computePlannedExpenseBarSegments(
     unexpectedByCategory[pid] = (unexpectedByCategory[pid] ?? 0) + impact;
   }
 
+  const purchasesByCategory: Record<number, number> = {};
+  for (const tx of purchaseTxs) {
+    const impact = viewingMonth
+      ? transactionMonthlyImpact(tx, viewingMonth)
+      : tx.amount;
+    if (impact <= 0) continue;
+    if (tx.subcategoryId == null) continue;
+    const sub = subById.get(tx.subcategoryId);
+    const pid = sub?.parentCategoryId;
+    if (pid == null) continue;
+    purchasesByCategory[pid] = (purchasesByCategory[pid] ?? 0) + impact;
+  }
+
   const totalPlanned = subcategories.reduce(
     (sum, sub) => sum + plannedAmountFromSub(sub, viewingMonth),
     0,
   );
   const totalUnexpected = unexpectedTxs.reduce(
+    (sum, tx) =>
+      sum + (viewingMonth ? transactionMonthlyImpact(tx, viewingMonth) : tx.amount),
+    0,
+  );
+  const totalPurchases = purchaseTxs.reduce(
     (sum, tx) =>
       sum + (viewingMonth ? transactionMonthlyImpact(tx, viewingMonth) : tx.amount),
     0,
@@ -144,6 +165,7 @@ export function computePlannedExpenseBarSegments(
       unallocatedBarPct: 0,
       totalPlanned,
       totalUnexpected,
+      totalPurchases,
       totalGoalSavings,
       combinedOfIncomePct: 0,
     };
@@ -157,8 +179,9 @@ export function computePlannedExpenseBarSegments(
       0,
     );
     const unexpected = unexpectedByCategory[cat.id] ?? 0;
+    const purchases = purchasesByCategory[cat.id] ?? 0;
     const goalSavings = savingsCatId === cat.id ? totalGoalSavings : 0;
-    const total = planned + unexpected + goalSavings;
+    const total = planned + unexpected + purchases + goalSavings;
     if (total <= 0) continue;
     const pctOfIncome = (total / income) * 100;
     parts.push({
@@ -169,6 +192,7 @@ export function computePlannedExpenseBarSegments(
       pctOfIncome,
       planned,
       unexpected,
+      purchases,
       goalSavings,
     });
   }
@@ -183,6 +207,7 @@ export function computePlannedExpenseBarSegments(
       pctOfIncome,
       planned: 0,
       unexpected: 0,
+      purchases: 0,
       goalSavings: totalGoalSavings,
     });
   }
@@ -196,7 +221,7 @@ export function computePlannedExpenseBarSegments(
     used = 100;
   }
   const unallocatedBarPct = Math.max(0, 100 - used);
-  const combined = totalPlanned + totalUnexpected + totalGoalSavings;
+  const combined = totalPlanned + totalUnexpected + totalPurchases + totalGoalSavings;
   const combinedOfIncomePct = Math.min(100, (combined / income) * 100);
 
   return {
@@ -204,6 +229,7 @@ export function computePlannedExpenseBarSegments(
     unallocatedBarPct,
     totalPlanned,
     totalUnexpected,
+    totalPurchases,
     totalGoalSavings,
     combinedOfIncomePct,
   };
@@ -211,7 +237,7 @@ export function computePlannedExpenseBarSegments(
 
 /** Dollar amount represented by a segment (includes unallocated income slice). */
 export function segmentCommittedAmount(seg: PlannedBarSeg, income: number): number {
-  const committed = seg.planned + seg.unexpected + seg.goalSavings;
+  const committed = seg.planned + seg.unexpected + seg.purchases + seg.goalSavings;
   if (committed > 0) return committed;
   if (income > 0 && seg.categoryId === UNALLOCATED_CATEGORY_ID) {
     return (seg.barWidthPct / 100) * income;
@@ -243,6 +269,7 @@ export function buildPieSegments(
         pctOfIncome: unalloc,
         planned: income > 0 ? (unalloc / 100) * income : 0,
         unexpected: 0,
+        purchases: 0,
         goalSavings: 0,
       },
     ];
@@ -284,6 +311,7 @@ export function buildTargetPieSegments(
     pctOfIncome: cat.targetPercent,
     planned: income > 0 ? (cat.targetPercent / 100) * income : 0,
     unexpected: 0,
+    purchases: 0,
     goalSavings: 0,
   }));
   const used = segments.reduce((sum, seg) => sum + seg.barWidthPct, 0);
@@ -297,6 +325,7 @@ export function buildTargetPieSegments(
       pctOfIncome: unalloc,
       planned: income > 0 ? (unalloc / 100) * income : 0,
       unexpected: 0,
+      purchases: 0,
       goalSavings: 0,
     });
   }

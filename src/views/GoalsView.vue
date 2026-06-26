@@ -60,6 +60,7 @@ const editFormError = ref<string | null>(null);
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
+const purchaseTxs = ref<Transaction[]>([]);
 const goalContributionTxs = ref<Transaction[]>([]);
 const goalAllocations = ref<GoalAllocation[]>([]);
 const loadingBudget = ref(false);
@@ -115,6 +116,7 @@ async function loadBudgetDetails() {
     categories.value = [];
     subcategories.value = [];
     unexpectedTxs.value = [];
+    purchaseTxs.value = [];
     goalContributionTxs.value = [];
     return;
   }
@@ -123,8 +125,12 @@ async function loadBudgetDetails() {
     const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = result.categories;
     subcategories.value = result.subcategories;
-    const [unexpected, goalContrib] = await Promise.all([
+    const [unexpected, purchases, goalContrib] = await Promise.all([
       window.fundlog.transaction.listUnexpected(
+        domain.activeProfileId,
+        activeBudget.value.id,
+      ),
+      window.fundlog.transaction.listPurchases(
         domain.activeProfileId,
         activeBudget.value.id,
       ),
@@ -134,6 +140,7 @@ async function loadBudgetDetails() {
       ),
     ]);
     unexpectedTxs.value = unexpected;
+    purchaseTxs.value = purchases;
     goalContributionTxs.value = goalContrib;
   } finally {
     loadingBudget.value = false;
@@ -215,6 +222,7 @@ const plannedBarResult = computed(() =>
     groupedSubcategories.value,
     subcategories.value,
     unexpectedTxs.value,
+    purchaseTxs.value,
     goalContributionTxs.value,
     monthlyIncome.value,
     calendarMonthNow(),
@@ -225,6 +233,7 @@ const committedTotal = computed(
   () =>
     plannedBarResult.value.totalPlanned +
     plannedBarResult.value.totalUnexpected +
+    plannedBarResult.value.totalPurchases +
     plannedBarResult.value.totalGoalSavings,
 );
 
