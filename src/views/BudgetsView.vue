@@ -6,7 +6,6 @@ import { useDomainStore } from '../stores/domain';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import BudgetPieCompare from '../components/BudgetPieCompare.vue';
-import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
 import VendorPicker from '../components/VendorPicker.vue';
 import CategoryImpactList from '../components/CategoryImpactList.vue';
 import {
@@ -196,6 +195,20 @@ function categoryUsedPct(cat: BudgetCategory) {
   const bucket = categoryBucketFor(cat);
   if (!bucket || bucket.targetAmount <= 0) return 0;
   return Math.min(100, (bucket.committed / bucket.targetAmount) * 100);
+}
+
+/** Purchases logged against this category this month (reduces "left"). */
+function categoryPurchases(cat: BudgetCategory) {
+  return categoryBucketFor(cat)?.purchases ?? 0;
+}
+
+/** Unexpected expenses logged against this category this month (reduces "left"). */
+function categoryUnexpected(cat: BudgetCategory) {
+  return categoryBucketFor(cat)?.unexpected ?? 0;
+}
+
+function categoryHasExtra(cat: BudgetCategory) {
+  return categoryPurchases(cat) > 0 || categoryUnexpected(cat) > 0;
 }
 
 const plannedBarResult = computed(() =>
@@ -448,27 +461,9 @@ async function submitSubcategory(category: BudgetCategory) {
     <div v-if="activeBudget" class="row g-3">
       <div class="col-12">
         <CollapsibleSection
-          title="What's left"
-          :meta="headroom.spendingTiers.memorableLine ?? monthLabel"
-          storage-key="budgets-money-left"
-          integrated
-        >
-          <MoneyLeftSummary
-            embedded
-            variant="planning"
-            :headroom="headroom"
-            :currency-code="currencyCode()"
-            :month-label="monthLabel"
-          />
-        </CollapsibleSection>
-      </div>
-
-      <div class="col-12">
-        <CollapsibleSection
           class="budgets-planning-panel"
           title="Income allocation"
           :meta="`Compare plan vs target · ${monthLabel}`"
-          :default-expanded="false"
           storage-key="budgets-allocation-compare"
         >
           <BudgetPieCompare
@@ -488,123 +483,17 @@ async function submitSubcategory(category: BudgetCategory) {
 
       <div class="col-12">
         <CollapsibleSection
-          class="budgets-planning-panel"
-          :title="`${activeBudget.name} · ${monthLabel}`"
-          :meta="`Effective income ${formatMoney(planningMonthIncome)}`"
-          storage-key="budgets-month-overview"
-        >
-          <div class="d-flex flex-wrap justify-content-end mb-3">
-            <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
-              Extra income
-            </RouterLink>
-          </div>
-
-          <div class="budget-stat-grid mb-3">
-              <div class="budget-stat">
-                <div class="budget-stat__label">Planned</div>
-                <div class="budget-stat__value">
-                  {{ formatMoney(plannedBarResult.totalPlanned) }}
-                </div>
-                <div v-if="planningMonthIncome" class="budget-stat__pct">
-                  {{
-                    formatPercent((plannedBarResult.totalPlanned / planningMonthIncome) * 100)
-                  }}% of income
-                </div>
-              </div>
-              <div class="budget-stat">
-                <div class="budget-stat__label">Purchases</div>
-                <div class="budget-stat__value">
-                  {{ formatMoney(plannedBarResult.totalPurchases) }}
-                </div>
-                <div v-if="planningMonthIncome && plannedBarResult.totalPurchases" class="budget-stat__pct">
-                  {{
-                    formatPercent((plannedBarResult.totalPurchases / planningMonthIncome) * 100)
-                  }}% of income
-                </div>
-              </div>
-              <div class="budget-stat">
-                <div class="budget-stat__label">Unexpected</div>
-                <div class="budget-stat__value">
-                  {{ formatMoney(plannedBarResult.totalUnexpected) }}
-                </div>
-                <div v-if="planningMonthIncome && plannedBarResult.totalUnexpected" class="budget-stat__pct">
-                  {{
-                    formatPercent((plannedBarResult.totalUnexpected / planningMonthIncome) * 100)
-                  }}% of income
-                </div>
-              </div>
-              <div class="budget-stat">
-                <div class="budget-stat__label">Goal savings</div>
-                <div class="budget-stat__value">
-                  {{ formatMoney(plannedBarResult.totalGoalSavings) }}
-                </div>
-                <div v-if="planningMonthIncome && plannedBarResult.totalGoalSavings" class="budget-stat__pct">
-                  {{
-                    formatPercent((plannedBarResult.totalGoalSavings / planningMonthIncome) * 100)
-                  }}% of income
-                </div>
-              </div>
-              <div class="budget-stat">
-                <div class="budget-stat__label">Combined</div>
-                <div class="budget-stat__value">
-                  {{ formatMoney(headroom.committedTotal) }}
-                </div>
-                <div class="budget-stat__pct">{{ formatPercent(totalPercent) }}% of income</div>
-              </div>
-            </div>
-
-            <PlannedExpenseCategoryBar
-              :category-parts="plannedBarResult.categoryParts"
-              :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-              empty-hint="Add planned amounts, unexpected expenses, or goal savings to see spending by category."
-            />
-            <p class="small mt-3 mb-0">
-              Purchases and unexpected expenses from
-              <RouterLink to="/expenses">Expenses</RouterLink>
-              and goal savings from
-              <RouterLink to="/goals">Goals</RouterLink>
-              count toward this month when spread across months.
-            </p>
-        </CollapsibleSection>
-      </div>
-
-      <div class="col-12">
-        <CollapsibleSection
-          class="budgets-planning-panel expenses-panel--impact"
-          title="Where the plan adjusts"
-          :meta="
-            anyCategoryImpact
-              ? `${formatMoney(totalExtraSpend)} extra · ${monthLabel}`
-              : 'No extra spend this month'
-          "
-          :default-expanded="false"
-          storage-key="budgets-category-impact"
-        >
-          <p class="small text-muted mb-3">
-            Purchases and unexpected expenses are paid out of your uncommitted leftover (income
-            after planned amounts and goal savings). This shows which categories are eating it and
-            how much is still left.
-          </p>
-          <CategoryImpactList
-            :rows="categoryImpact"
-            :currency-code="currencyCode()"
-            :pool="uncommittedPool"
-            empty-hint="Log a purchase or unexpected expense to see where your leftover goes."
-          />
-        </CollapsibleSection>
-      </div>
-
-      <div class="col-12">
-        <CollapsibleSection
           title="Line items by category"
-          meta="Budget, committed, and left per category"
+          :meta="`${formatMoney(headroom.moneyLeft)} left of ${formatMoney(planningMonthIncome)} · ${monthLabel}`"
           :default-expanded="false"
           storage-key="budgets-line-items"
         >
           <p class="line-items-intro mb-2">
-            Each bucket shows budget health at a glance — expand a card to log purchases or edit
-            expenses. Unexpected spending goes on
-            <RouterLink to="/expenses">Expenses</RouterLink>.
+            You have <strong>{{ formatMoney(headroom.moneyLeft) }}</strong> left of your
+            {{ formatMoney(planningMonthIncome) }} to work with this month — planned amounts,
+            purchases, unexpected expenses, and goal savings all draw it down. Each bucket shows
+            budget health at a glance — expand a card to log purchases or edit expenses. Unexpected
+            spending goes on <RouterLink to="/expenses">Expenses</RouterLink>.
           </p>
           <div class="budget-categories">
               <section
@@ -689,6 +578,31 @@ async function submitSubcategory(category: BudgetCategory) {
                       <strong>{{ formatMoney(categoryBucketFor(cat)?.committed ?? 0) }}</strong>
                     </span>
                   </div>
+
+                  <p
+                    v-if="categoryHasExtra(cat)"
+                    class="budget-category-panel__extra small mb-0"
+                  >
+                    <span class="budget-category-panel__extra-label">Already spent, lowering what's left:</span>
+                    <span
+                      v-if="categoryPurchases(cat) > 0"
+                      class="budget-category-panel__extra-purchase"
+                    >
+                      −{{ formatMoney(categoryPurchases(cat)) }} purchases
+                    </span>
+                    <span
+                      v-if="categoryPurchases(cat) > 0 && categoryUnexpected(cat) > 0"
+                      aria-hidden="true"
+                    >
+                      ·
+                    </span>
+                    <span
+                      v-if="categoryUnexpected(cat) > 0"
+                      class="budget-category-panel__extra-unexpected"
+                    >
+                      −{{ formatMoney(categoryUnexpected(cat)) }} unexpected
+                    </span>
+                  </p>
                 </header>
 
                 <div
@@ -1105,6 +1019,138 @@ async function submitSubcategory(category: BudgetCategory) {
                 </div>
               </section>
           </div>
+        </CollapsibleSection>
+      </div>
+
+      <div class="col-12">
+        <CollapsibleSection
+          class="budgets-planning-panel"
+          title="Budget overview"
+          :meta="`${formatMoney(headroom.moneyLeft)} left · ${monthLabel}`"
+          storage-key="budgets-money-left"
+        >
+          <div class="d-flex flex-wrap align-items-center justify-content-end gap-2 mb-3">
+            <span class="small text-muted">
+              Effective income {{ formatMoney(planningMonthIncome) }}
+            </span>
+            <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+              Extra income
+            </RouterLink>
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-6 col-md-4">
+              <div class="budget-stat budget-stat--summary">
+                <div class="budget-stat__label">Income to allocate</div>
+                <div class="budget-stat__value">{{ formatMoney(planningMonthIncome) }}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-4">
+              <div class="budget-stat budget-stat--summary">
+                <div class="budget-stat__label">Committed</div>
+                <div class="budget-stat__value">{{ formatMoney(headroom.committedTotal) }}</div>
+                <div v-if="planningMonthIncome" class="budget-stat__pct">
+                  {{ formatPercent(totalPercent) }}% of income
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-md-4">
+              <div class="budget-stat budget-stat--summary budget-stat--left">
+                <div class="budget-stat__label">Left to work with</div>
+                <div class="budget-stat__value">{{ formatMoney(headroom.moneyLeft) }}</div>
+                <div v-if="planningMonthIncome" class="budget-stat__pct">
+                  {{ formatPercent((headroom.moneyLeft / planningMonthIncome) * 100) }}% of income
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <h3 class="h6 text-muted mb-2">Where it's committed</h3>
+          <div class="budget-stat-grid mb-3">
+              <div class="budget-stat">
+                <div class="budget-stat__label">Planned</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalPlanned) }}
+                </div>
+                <div v-if="planningMonthIncome" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalPlanned / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+              <div class="budget-stat">
+                <div class="budget-stat__label">Purchases</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalPurchases) }}
+                </div>
+                <div v-if="planningMonthIncome && plannedBarResult.totalPurchases" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalPurchases / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+              <div class="budget-stat">
+                <div class="budget-stat__label">Unexpected</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalUnexpected) }}
+                </div>
+                <div v-if="planningMonthIncome && plannedBarResult.totalUnexpected" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalUnexpected / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+              <div class="budget-stat">
+                <div class="budget-stat__label">Goal savings</div>
+                <div class="budget-stat__value">
+                  {{ formatMoney(plannedBarResult.totalGoalSavings) }}
+                </div>
+                <div v-if="planningMonthIncome && plannedBarResult.totalGoalSavings" class="budget-stat__pct">
+                  {{
+                    formatPercent((plannedBarResult.totalGoalSavings / planningMonthIncome) * 100)
+                  }}% of income
+                </div>
+              </div>
+            </div>
+
+            <PlannedExpenseCategoryBar
+              :category-parts="plannedBarResult.categoryParts"
+              :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
+              empty-hint="Add planned amounts, unexpected expenses, or goal savings to see spending by category."
+            />
+            <p class="small mt-3 mb-0">
+              Purchases and unexpected expenses from
+              <RouterLink to="/expenses">Expenses</RouterLink>
+              and goal savings from
+              <RouterLink to="/goals">Goals</RouterLink>
+              count toward this month when spread across months.
+            </p>
+        </CollapsibleSection>
+      </div>
+
+      <div class="col-12">
+        <CollapsibleSection
+          class="budgets-planning-panel expenses-panel--impact"
+          title="Where the plan adjusts"
+          :meta="
+            anyCategoryImpact
+              ? `${formatMoney(totalExtraSpend)} extra · ${monthLabel}`
+              : 'No extra spend this month'
+          "
+          :default-expanded="false"
+          storage-key="budgets-category-impact"
+        >
+          <p class="small text-muted mb-3">
+            Purchases and unexpected expenses are paid out of your uncommitted leftover (income
+            after planned amounts and goal savings). This shows which categories are eating it and
+            how much is still left.
+          </p>
+          <CategoryImpactList
+            :rows="categoryImpact"
+            :currency-code="currencyCode()"
+            :pool="uncommittedPool"
+            empty-hint="Log a purchase or unexpected expense to see where your leftover goes."
+          />
         </CollapsibleSection>
       </div>
     </div>

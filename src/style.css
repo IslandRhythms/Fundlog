@@ -1378,6 +1378,23 @@ html {
   color: var(--fund-savings);
 }
 
+.budget-stat--summary {
+  height: 100%;
+}
+
+.budget-stat--summary .budget-stat__value {
+  font-size: 1.45rem;
+}
+
+.budget-stat--left {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--accent) 18%);
+}
+
+.budget-stat--left .budget-stat__value {
+  color: var(--accent);
+}
+
 .expense-type-badge {
   font-size: 0.7rem;
   font-weight: 600;
@@ -2964,6 +2981,34 @@ html {
 
 .budget-category-panel--collapsed .budget-category-panel__strip {
   padding-bottom: 0.85rem;
+}
+
+.budget-category-panel__extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.45rem;
+  padding: 0 0.85rem 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-category-panel--collapsed .budget-category-panel__extra {
+  padding-bottom: 0.85rem;
+}
+
+.budget-category-panel__extra-label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.budget-category-panel__extra-purchase {
+  color: var(--fund-purchase);
+  font-weight: 600;
+}
+
+.budget-category-panel__extra-unexpected {
+  color: var(--fund-unexpected);
+  font-weight: 600;
 }
 
 .budget-category-panel__body {

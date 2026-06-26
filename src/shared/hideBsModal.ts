@@ -5,6 +5,19 @@
  */
 type ModalInstance = { hide: () => void };
 
+export function showBsModal(elementId: string): void {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+
+  const ModalApi = (
+    window as Window & {
+      bootstrap?: { Modal: { getOrCreateInstance: (element: Element) => { show: () => void } } };
+    }
+  ).bootstrap?.Modal;
+
+  ModalApi?.getOrCreateInstance(el).show();
+}
+
 export function hideBsModal(elementId: string): void {
   const el = document.getElementById(elementId);
   if (!el) return;

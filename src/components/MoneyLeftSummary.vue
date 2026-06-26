@@ -2,22 +2,20 @@
 import { computed, ref } from 'vue';
 import type { BudgetHeadroomResult, SpendingTierStatus } from '../shared/budgetHeadroom';
 import type { ImpactTxn } from '../shared/categoryImpact';
+import type { TierKey, TierLineItem, TierSpend } from '../shared/tierBreakdown';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
 import { FUND_COLORS, ringColorForRuleKey } from '../shared/fundColors';
 
-export type TierLineItem = {
-  id: number;
-  label: string;
-  planned: number;
-  color: string;
-};
-
-export type TierSpend = {
+/** Purchases/unexpected for one tier, collapsed by vendor (merchant). */
+type VendorGroup = {
+  key: string;
+  vendor: string;
+  amount: number;
+  count: number;
   purchases: number;
   unexpected: number;
+  latestDate: string;
 };
-
-type TierKey = 'wants' | 'needs' | 'savings';
 
 const props = withDefaults(
   defineProps<{
@@ -53,6 +51,52 @@ function spendFor(key: string): TierSpend | null {
 
 function itemsFor(key: string): ImpactTxn[] {
   return props.tierItems?.[key as TierKey] ?? [];
+}
+
+/** Collapse a tier's purchases/unexpected into one row per vendor, largest first. */
+function vendorGroupsFor(key: string): VendorGroup[] {
+  const groups = new Map<string, VendorGroup>();
+  for (const item of itemsFor(key)) {
+    const vendor = item.merchant?.trim() || item.label;
+    const groupKey = vendor.toLowerCase();
+    let group = groups.get(groupKey);
+    if (!group) {
+      group = {
+        key: groupKey,
+        vendor,
+        amount: 0,
+        count: 0,
+        purchases: 0,
+        unexpected: 0,
+        latestDate: item.date,
+      };
+      groups.set(groupKey, group);
+    }
+    group.amount += item.amount;
+    group.count += 1;
+    if (item.kind === 'purchase') group.purchases += item.amount;
+    else group.unexpected += item.amount;
+    if (item.date > group.latestDate) group.latestDate = item.date;
+  }
+  return [...groups.values()].sort((a, b) => b.amount - a.amount);
+}
+
+function groupDotClass(group: VendorGroup): string {
+  return group.unexpected > group.purchases
+    ? 'impact-txn__dot--unexpected'
+    : 'impact-txn__dot--purchase';
+}
+
+function groupMeta(group: VendorGroup): string {
+  if (group.count === 1) {
+    const kind = group.purchases > 0 ? 'Purchase' : 'Unexpected';
+    const date = txDate(group.latestDate);
+    return date ? `${kind} · ${date}` : kind;
+  }
+  const parts: string[] = [];
+  if (group.purchases > 0) parts.push(`${formatMoney(group.purchases)} purchases`);
+  if (group.unexpected > 0) parts.push(`${formatMoney(group.unexpected)} unexpected`);
+  return `${group.count} entries · ${parts.join(' · ')}`;
 }
 
 /** Total purchases + unexpected drawn from the leftover by this tier. */
@@ -407,29 +451,25 @@ function tierStatusClass(status: SpendingTierStatus): string {
                         </span>
                       </template>
                     </p>
-                    <ul v-if="itemsFor(tier.key).length" class="impact-txn-list list-unstyled mb-0">
+                    <ul
+                      v-if="vendorGroupsFor(tier.key).length"
+                      class="impact-txn-list list-unstyled mb-0"
+                    >
                       <li
-                        v-for="item in itemsFor(tier.key)"
-                        :key="item.kind + '-' + item.id"
+                        v-for="group in vendorGroupsFor(tier.key)"
+                        :key="group.key"
                         class="impact-txn"
                       >
                         <span
                           class="impact-txn__dot"
-                          :class="
-                            item.kind === 'purchase'
-                              ? 'impact-txn__dot--purchase'
-                              : 'impact-txn__dot--unexpected'
-                          "
+                          :class="groupDotClass(group)"
                           aria-hidden="true"
                         />
                         <span class="impact-txn__main">
-                          <span class="impact-txn__label">{{ item.label }}</span>
-                          <span class="impact-txn__meta">
-                            {{ item.kind === 'purchase' ? 'Purchase' : 'Unexpected' }}
-                            <template v-if="txDate(item.date)"> · {{ txDate(item.date) }}</template>
-                          </span>
+                          <span class="impact-txn__label">{{ group.vendor }}</span>
+                          <span class="impact-txn__meta">{{ groupMeta(group) }}</span>
                         </span>
-                        <span class="impact-txn__amt">{{ formatMoney(item.amount) }}</span>
+                        <span class="impact-txn__amt">{{ formatMoney(group.amount) }}</span>
                       </li>
                     </ul>
                   </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
@@ -11,7 +11,7 @@ import VendorPicker from '../components/VendorPicker.vue';
 import CategoryImpactList from '../components/CategoryImpactList.vue';
 import { computeCategoryImpact } from '../shared/categoryImpact';
 import { useDomainStore } from '../stores/domain';
-import { hideBsModal } from '../shared/hideBsModal';
+import { hideBsModal, showBsModal } from '../shared/hideBsModal';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { calendarMonthNow } from '../shared/calendarMonth';
 import { monthlyPortion } from '../shared/monthSpread';
@@ -26,6 +26,8 @@ import type { BudgetCategory, BudgetSubcategory, Goal, Profile, Transaction } fr
 
 const domain = useDomainStore();
 const toast = useToast();
+const route = useRoute();
+const router = useRouter();
 
 const loading = ref(false);
 const categories = ref<BudgetCategory[]>([]);
@@ -416,6 +418,12 @@ onMounted(async () => {
   await domain.loadBudgets();
   await domain.loadGoals();
   await loadData();
+  const log = route.query.log;
+  if (log === 'purchase' || log === 'unexpected') {
+    await router.replace({ query: {} });
+    await nextTick();
+    showBsModal(log === 'purchase' ? 'addPurchaseModal' : 'addUnexpectedModal');
+  }
 });
 
 async function addUnexpected() {

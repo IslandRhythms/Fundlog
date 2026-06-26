@@ -6,17 +6,12 @@ import BudgetPieCompare from '../components/BudgetPieCompare.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import LoadingView from '../components/LoadingView.vue';
 import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
-import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import {
   computePlannedExpenseBarSegments,
   buildPieSegments,
-  plannedAmountFromSub,
-  transactionMonthlyImpact,
 } from '../shared/plannedExpenseBar';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
-import { buildImpactTxn } from '../shared/categoryImpact';
-import type { ImpactTxn } from '../shared/categoryImpact';
-import type { TierLineItem, TierSpend } from '../components/MoneyLeftSummary.vue';
+import { computeTierBreakdown } from '../shared/tierBreakdown';
 import {
   goalProgressPctWithBudget,
   monthlyPlanTowardGoal,
@@ -129,17 +124,11 @@ watch(
   },
 );
 
-const baseMonthlyIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
-
 const monthlyIncome = computed(() => {
   const b = activeBudget.value;
   if (!b) return 0;
   return domain.effectiveMonthlyIncomeFor(b.id, calendarMonthNow());
 });
-
-const monthIncomeBoost = computed(() =>
-  Math.max(0, monthlyIncome.value - baseMonthlyIncome.value),
-);
 
 const plannedBarResult = computed(() =>
   computePlannedExpenseBarSegments(
@@ -167,103 +156,15 @@ const monthLabel = computed(() => {
 
 const pieSegments = computed(() => buildPieSegments(plannedBarResult.value, monthlyIncome.value));
 
-type TierKey = 'wants' | 'needs' | 'savings';
-
-function tierKeyForRule(ruleKey: string): TierKey | null {
-  if (ruleKey === 'savingsDebt') return 'savings';
-  if (ruleKey === 'needs') return 'needs';
-  if (ruleKey === 'wants') return 'wants';
-  return null;
-}
-
-/** Planned line items (subcategories) grouped by spending tier. */
-const tierLineItems = computed<Partial<Record<TierKey, TierLineItem[]>>>(() => {
-  const month = calendarMonthNow();
-  const out: Record<TierKey, TierLineItem[]> = { wants: [], needs: [], savings: [] };
-
-  for (const cat of categories.value) {
-    const key = tierKeyForRule(cat.ruleKey);
-    if (!key) continue;
-    const subs = groupedSubcategories.value[cat.id] ?? [];
-    for (const sub of subs) {
-      const planned = plannedAmountFromSub(sub, month);
-      if (planned <= 0) continue;
-      out[key].push({ id: sub.id, label: sub.label, planned, color: cat.color });
-    }
-  }
-
-  for (const k of ['wants', 'needs', 'savings'] as const) {
-    out[k].sort((a, b) => b.planned - a.planned);
-  }
-  return out;
-});
-
-/**
- * Actual spend per tier this month. Purchases/unexpected are logged at the category
- * level, so they're summarised per tier rather than per line item.
- */
-const tierSpend = computed<Partial<Record<TierKey, TierSpend>>>(() => {
-  const month = calendarMonthNow();
-  const subToTier: Record<number, TierKey> = {};
-  for (const cat of categories.value) {
-    const key = tierKeyForRule(cat.ruleKey);
-    if (!key) continue;
-    for (const sub of groupedSubcategories.value[cat.id] ?? []) {
-      subToTier[sub.id] = key;
-    }
-  }
-
-  const out: Record<TierKey, TierSpend> = {
-    wants: { purchases: 0, unexpected: 0 },
-    needs: { purchases: 0, unexpected: 0 },
-    savings: { purchases: 0, unexpected: 0 },
-  };
-
-  for (const tx of purchaseTxs.value) {
-    if (tx.subcategoryId == null) continue;
-    const key = subToTier[tx.subcategoryId];
-    if (!key) continue;
-    out[key].purchases += transactionMonthlyImpact(tx, month);
-  }
-  for (const tx of unexpectedTxs.value) {
-    if (tx.subcategoryId == null) continue;
-    const key = subToTier[tx.subcategoryId];
-    if (!key) continue;
-    out[key].unexpected += transactionMonthlyImpact(tx, month);
-  }
-  return out;
-});
-
-/** The individual purchase/unexpected entries behind each tier's spend, largest first. */
-const tierItems = computed<Partial<Record<TierKey, ImpactTxn[]>>>(() => {
-  const month = calendarMonthNow();
-  const subToTier: Record<number, TierKey> = {};
-  for (const cat of categories.value) {
-    const key = tierKeyForRule(cat.ruleKey);
-    if (!key) continue;
-    for (const sub of groupedSubcategories.value[cat.id] ?? []) {
-      subToTier[sub.id] = key;
-    }
-  }
-
-  const out: Record<TierKey, ImpactTxn[]> = { wants: [], needs: [], savings: [] };
-
-  const collect = (tx: Transaction, kind: 'purchase' | 'unexpected') => {
-    if (tx.subcategoryId == null) return;
-    const key = subToTier[tx.subcategoryId];
-    if (!key) return;
-    const item = buildImpactTxn(tx, kind, month);
-    if (item) out[key].push(item);
-  };
-
-  for (const tx of purchaseTxs.value) collect(tx, 'purchase');
-  for (const tx of unexpectedTxs.value) collect(tx, 'unexpected');
-
-  for (const k of ['wants', 'needs', 'savings'] as const) {
-    out[k].sort((a, b) => b.amount - a.amount);
-  }
-  return out;
-});
+const tierBreakdown = computed(() =>
+  computeTierBreakdown(
+    categories.value,
+    groupedSubcategories.value,
+    purchaseTxs.value,
+    unexpectedTxs.value,
+    calendarMonthNow(),
+  ),
+);
 
 const allocationTargetCaption = computed(() => {
   const b = activeBudget.value;
@@ -272,18 +173,10 @@ const allocationTargetCaption = computed(() => {
   return 'Custom category targets';
 });
 
-function formatMoney(amount: number) {
-  const code = activeProfile.value?.currencyCode?.trim() || 'USD';
-  try {
-    return amount.toLocaleString(undefined, { style: 'currency', currency: code });
-  } catch {
-    return `${amount.toLocaleString()} ${code}`;
-  }
-}
-
-const totalPercent = computed(() => plannedBarResult.value.combinedOfIncomePct);
-
-const recentTransactions = computed(() => transactions.value.slice(0, 5));
+const recentTransactions = computed(() => {
+  const month = calendarMonthNow();
+  return transactions.value.filter((tx) => tx.date.slice(0, 7) === month).slice(0, 5);
+});
 
 function formatTxTitle(tx: Transaction) {
   const base = (tx.description || tx.merchant || '—').trim();
@@ -373,11 +266,52 @@ function activityKindDetail(tx: Transaction): string | null {
   <div class="view view-dashboard container-fluid">
     <p class="view-page-eyebrow mb-1">Snapshot</p>
     <h2 class="mb-2">Dashboard</h2>
-    <p class="view-subtitle mb-4">
+    <p class="view-subtitle mb-3">
       Your month at a glance — how much is safe to spend, and which bucket you’re in.
     </p>
 
+    <div class="dashboard-quick-actions d-flex flex-wrap gap-2 mb-4">
+      <RouterLink to="/expenses?log=purchase" class="btn btn-sm btn-primary">
+        Log purchase
+      </RouterLink>
+      <RouterLink to="/expenses?log=unexpected" class="btn btn-sm btn-outline-primary">
+        Log unexpected
+      </RouterLink>
+      <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+        Add income
+      </RouterLink>
+      <RouterLink to="/goals" class="btn btn-sm btn-outline-secondary">
+        New goal
+      </RouterLink>
+    </div>
+
     <div class="row g-3">
+      <div class="col-12">
+        <CollapsibleSection
+          class="dashboard-panel"
+          title="Income allocation"
+          :meta="activeBudget ? `${activeBudget.name} · ${monthLabel}` : undefined"
+          storage-key="dashboard-allocation-compare"
+        >
+          <p v-if="!activeBudget" class="mb-0">
+            Create a budget to see your allocation here.
+          </p>
+          <LoadingView v-else-if="loading" message="Loading budget details…" />
+          <BudgetPieCompare
+            v-else-if="categories.length"
+            :categories="categories"
+            :actual-segments="pieSegments"
+            :income="monthlyIncome"
+            :currency-code="activeProfile?.currencyCode?.trim() || 'USD'"
+            actual-caption="Where your money is going this month"
+            :target-caption="allocationTargetCaption"
+          />
+          <p v-else class="small mb-0">
+            Add expenses on <RouterLink to="/budgets">Budgets</RouterLink> to see the mix.
+          </p>
+        </CollapsibleSection>
+      </div>
+
       <div v-if="activeBudget && !loading" class="col-12">
         <CollapsibleSection
           title="What's left"
@@ -391,96 +325,10 @@ function activityKindDetail(tx: Transaction): string | null {
             :headroom="headroom"
             :currency-code="activeProfile?.currencyCode ?? 'USD'"
             :month-label="monthLabel"
-            :tier-line-items="tierLineItems"
-            :tier-spend="tierSpend"
-            :tier-items="tierItems"
+            :tier-line-items="tierBreakdown.lineItems"
+            :tier-spend="tierBreakdown.spend"
+            :tier-items="tierBreakdown.items"
           />
-        </CollapsibleSection>
-      </div>
-
-      <div class="col-12">
-        <CollapsibleSection
-          class="dashboard-panel"
-          title="Income allocation"
-          :meta="activeBudget ? `${activeBudget.name} · ${monthLabel}` : undefined"
-          :default-expanded="false"
-          storage-key="dashboard-allocation-compare"
-        >
-          <p v-if="!activeBudget" class="mb-0">
-            Create a budget to see your allocation here.
-          </p>
-          <LoadingView v-else-if="loading" message="Loading budget details…" />
-          <BudgetPieCompare
-            v-else-if="categories.length"
-            :categories="categories"
-            :actual-segments="pieSegments"
-            :income="monthlyIncome"
-            :currency-code="activeProfile?.currencyCode?.trim() || 'USD'"
-            actual-caption="Planned, unexpected, and goal savings"
-            :target-caption="allocationTargetCaption"
-          />
-          <p v-else class="small mb-0">
-            Add expenses on <RouterLink to="/budgets">Budgets</RouterLink> to see the mix.
-          </p>
-        </CollapsibleSection>
-      </div>
-
-      <div class="col-12">
-        <CollapsibleSection
-          class="dashboard-panel"
-          title="Budget overview"
-          :meta="activeBudget ? formatMoney(monthlyIncome) + ' effective income' : undefined"
-          storage-key="dashboard-budget-overview"
-        >
-          <p v-if="!activeBudget" class="mb-0">
-            Create a budget to see your allocation and expenses here.
-          </p>
-          <LoadingView v-else-if="loading" message="Loading budget details…" />
-          <template v-else>
-            <p v-if="monthIncomeBoost > 0" class="small mb-3">
-              Includes {{ formatMoney(monthIncomeBoost) }} extra from
-              <RouterLink to="/extra-income">Extra income</RouterLink>
-            </p>
-
-            <div class="budget-stat-grid mb-3">
-                  <div class="budget-stat">
-                    <div class="budget-stat__label">Planned</div>
-                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalPlanned) }}</div>
-                  </div>
-                  <div class="budget-stat">
-                    <div class="budget-stat__label">Purchases</div>
-                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalPurchases) }}</div>
-                  </div>
-                  <div class="budget-stat">
-                    <div class="budget-stat__label">Unexpected</div>
-                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalUnexpected) }}</div>
-                  </div>
-                  <div class="budget-stat">
-                    <div class="budget-stat__label">Goal savings</div>
-                    <div class="budget-stat__value">{{ formatMoney(plannedBarResult.totalGoalSavings) }}</div>
-                  </div>
-                  <div class="budget-stat">
-                    <div class="budget-stat__label">Combined</div>
-                    <div class="budget-stat__value">
-                      {{
-                        formatMoney(
-                          plannedBarResult.totalPlanned +
-                            plannedBarResult.totalUnexpected +
-                            plannedBarResult.totalPurchases +
-                            plannedBarResult.totalGoalSavings,
-                        )
-                      }}
-                    </div>
-                    <div class="budget-stat__pct">{{ totalPercent.toFixed(1) }}% of income</div>
-                  </div>
-                </div>
-
-                <PlannedExpenseCategoryBar
-                  :category-parts="plannedBarResult.categoryParts"
-                  :unallocated-bar-pct="plannedBarResult.unallocatedBarPct"
-                  empty-hint="Add planned lines, unexpected expenses, or goal savings to see your budget mix here."
-                />
-          </template>
         </CollapsibleSection>
       </div>
 
@@ -565,12 +413,12 @@ function activityKindDetail(tx: Transaction): string | null {
       <div class="col-12">
         <CollapsibleSection
           title="Recent activity"
-          :meta="recentTransactions.length ? `${recentTransactions.length} recent` : 'No activity yet'"
+          :meta="recentTransactions.length ? `${recentTransactions.length} this month` : 'No activity this month'"
           :default-expanded="false"
           storage-key="dashboard-recent-activity"
         >
             <p v-if="!recentTransactions.length" class="small mb-0">
-              No recent transactions yet. Import CSV or add activity to see it here.
+              No transactions this month yet. Import CSV or add activity to see it here.
             </p>
             <ul v-else class="list-unstyled mb-0 dashboard-activity-list">
               <li
