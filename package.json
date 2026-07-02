@@ -1,6 +1,6 @@
 {
-  "name": "fundlog-forge",
-  "productName": "fundlog-forge",
+  "name": "fundlog",
+  "productName": "fundlog",
   "version": "1.0.0",
   "description": "My Electron application description",
   "main": ".vite/build/main.js",
@@ -10,6 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "build:icons": "npx electron-icon-builder --input=./src/assets/logo.png --output=./build --flatten && node -e \"const fs=require('fs'); fs.copyFileSync('build/icons/256x256.png','build/icons/icon.png'); fs.mkdirSync('public',{recursive:true}); fs.copyFileSync('build/icons/256x256.png','public/favicon.png');\"",
     "lint": "eslint --ext .ts,.tsx ."
   },
   "keywords": [],

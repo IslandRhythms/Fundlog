@@ -35,8 +35,8 @@ Fundlog is a desktop application built with Electron, Vite, and Vue 3 for tracki
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/<your-username>/fundlog-forge.git
-cd fundlog-forge
+git clone https://github.com/<your-username>/fundlog.git
+cd fundlog
 ```
 
 2. **Install dependencies**

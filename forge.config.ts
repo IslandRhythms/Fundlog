@@ -1,4 +1,5 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
+import path from 'node:path';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
@@ -32,10 +33,14 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     ignore: packagerIgnore,
+    icon: path.resolve(__dirname, 'build/icons/icon'),
+    extraResource: [path.resolve(__dirname, 'build/icons')],
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      setupIcon: path.resolve(__dirname, 'build/icons/icon.ico'),
+    }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),

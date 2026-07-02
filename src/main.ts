@@ -33,6 +33,19 @@ if (started) {
 
 let mainWindow: BrowserWindow | null = null;
 
+function resolveAppIcon(): string {
+  const iconDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'icons')
+    : path.join(__dirname, '../../build/icons');
+  const iconFile =
+    process.platform === 'win32'
+      ? 'icon.ico'
+      : process.platform === 'darwin'
+        ? 'icon.icns'
+        : 'icon.png';
+  return path.join(iconDir, iconFile);
+}
+
 const createMainWindow = () => {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -40,6 +53,7 @@ const createMainWindow = () => {
     minWidth: 1024,
     minHeight: 640,
     title: 'Fundlog',
+    icon: resolveAppIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
