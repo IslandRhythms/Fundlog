@@ -57,6 +57,8 @@ export interface BudgetSubcategory {
   spreadMonths: number;
   /** First calendar month the recurring spread applies (YYYY-MM); used when spreadMonths > 1. */
   spreadStartMonth: string | null;
+  /** Day of month the bill is due (1–31); optional, for upcoming-dues UI. */
+  dueDay: number | null;
   sortOrder: number;
 }
 
@@ -194,5 +196,9 @@ export type CustomThemeConfig = {
 export type AppPrefs = {
   databasePath?: string;
   customTheme?: CustomThemeConfig | null;
+  /** Remind to backup when last backup is older than this many days; 0 = off. Default 7. */
+  backupReminderDays?: number;
+  /** ISO timestamp of last successful database export. */
+  lastBackupAt?: string;
 };
 

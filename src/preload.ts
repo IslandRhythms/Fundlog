@@ -110,6 +110,7 @@ export const api = {
       isFlexible: boolean;
       spreadMonths?: number;
       spreadStartMonth?: string | null;
+      dueDay?: number | null;
       sortOrder?: number;
     }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
       ipcRenderer.invoke('subcategory:create', input),
@@ -124,6 +125,7 @@ export const api = {
       isFlexible: boolean;
       spreadMonths?: number;
       spreadStartMonth?: string | null;
+      dueDay?: number | null;
     }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
       ipcRenderer.invoke('subcategory:update', input),
     delete: async (input: {
@@ -138,21 +140,47 @@ export const api = {
       budgetId: number | null,
     ): Promise<Transaction[]> =>
       ipcRenderer.invoke('transaction:listByBudget', { profileId, budgetId }),
+    listByBudgetPage: async (input: {
+      profileId: number;
+      budgetId: number | null;
+      limit?: number;
+      offset?: number;
+      q?: string | null;
+      dateFrom?: string | null;
+      dateTo?: string | null;
+      subcategoryId?: number | null;
+    }): Promise<{ rows: Transaction[]; total: number }> =>
+      ipcRenderer.invoke('transaction:listByBudgetPage', input),
     listUnexpected: async (
       profileId: number,
       budgetId: number,
+      month?: string | null,
     ): Promise<Transaction[]> =>
-      ipcRenderer.invoke('transaction:listUnexpected', { profileId, budgetId }),
+      ipcRenderer.invoke('transaction:listUnexpected', {
+        profileId,
+        budgetId,
+        month,
+      }),
     listPurchases: async (
       profileId: number,
       budgetId: number,
+      month?: string | null,
     ): Promise<Transaction[]> =>
-      ipcRenderer.invoke('transaction:listPurchases', { profileId, budgetId }),
+      ipcRenderer.invoke('transaction:listPurchases', {
+        profileId,
+        budgetId,
+        month,
+      }),
     listGoalContributions: async (
       profileId: number,
       budgetId: number,
+      month?: string | null,
     ): Promise<Transaction[]> =>
-      ipcRenderer.invoke('transaction:listGoalContributions', { profileId, budgetId }),
+      ipcRenderer.invoke('transaction:listGoalContributions', {
+        profileId,
+        budgetId,
+        month,
+      }),
     createManual: async (input: {
       profileId: number;
       budgetId: number;

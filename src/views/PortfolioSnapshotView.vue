@@ -37,6 +37,18 @@ const editSnapDate = ref('');
 const editSnapValue = ref<number | null>(null);
 
 const historyAccount = ref<PortfolioAccount | null>(null);
+const historyDateFrom = ref('');
+const historyDateTo = ref('');
+
+const filteredHistorySnapshots = computed(() => {
+  if (!historyAccount.value) return [];
+  let snaps = [...historyAccount.value.snapshots].reverse();
+  const from = historyDateFrom.value.trim();
+  const to = historyDateTo.value.trim();
+  if (from) snaps = snaps.filter((s) => s.date >= from);
+  if (to) snaps = snaps.filter((s) => s.date <= to);
+  return snaps;
+});
 
 const activeProfileId = computed(() => domain.activeProfileId);
 const currencyCode = computed(
@@ -147,6 +159,8 @@ function openLogValueModal(accountId?: number) {
 
 function openHistoryModal(account: PortfolioAccount) {
   historyAccount.value = account;
+  historyDateFrom.value = '';
+  historyDateTo.value = '';
 }
 
 function openEditSnapshotModal(
@@ -732,42 +746,65 @@ async function removeSnapshot(snapshotId: number, accountId: number) {
           >
             No entries yet.
           </div>
-          <div v-else class="table-responsive">
-            <table class="table table-sm align-middle mb-0">
-              <thead>
-                <tr>
-                  <th scope="col">Date</th>
-                  <th scope="col">Value</th>
-                  <th scope="col" class="text-end">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="snap in [...historyAccount.snapshots].reverse()"
-                  :key="snap.id"
-                >
-                  <td>{{ formatShortDate(snap.date) }}</td>
-                  <td>{{ money(snap.value) }}</td>
-                  <td class="text-end">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-secondary me-1"
-                      @click="openEditSnapshotModal(historyAccount!.id, snap)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-danger"
-                      @click="removeSnapshot(snap.id, historyAccount!.id)"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <template v-else>
+            <div class="row g-2 mb-3">
+              <div class="col-sm-6">
+                <label class="form-label small mb-1">From</label>
+                <input
+                  v-model="historyDateFrom"
+                  type="date"
+                  class="form-control form-control-sm"
+                />
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label small mb-1">To</label>
+                <input
+                  v-model="historyDateTo"
+                  type="date"
+                  class="form-control form-control-sm"
+                />
+              </div>
+            </div>
+            <p v-if="!filteredHistorySnapshots.length" class="text-muted small">
+              No entries in this date range.
+            </p>
+            <div v-else class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">Value</th>
+                    <th scope="col" class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="snap in filteredHistorySnapshots"
+                    :key="snap.id"
+                  >
+                    <td>{{ formatShortDate(snap.date) }}</td>
+                    <td>{{ money(snap.value) }}</td>
+                    <td class="text-end">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary me-1"
+                        @click="openEditSnapshotModal(historyAccount!.id, snap)"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        @click="removeSnapshot(snap.id, historyAccount!.id)"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
         </div>
         <div class="modal-footer">
           <button

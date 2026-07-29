@@ -90,6 +90,7 @@ interface Window {
         isFlexible: boolean;
         spreadMonths?: number;
         spreadStartMonth?: string | null;
+        dueDay?: number | null;
         sortOrder?: number;
       }): Promise<{
         categories: import('./shared/types').BudgetCategory[];
@@ -106,6 +107,7 @@ interface Window {
         isFlexible: boolean;
         spreadMonths?: number;
         spreadStartMonth?: string | null;
+        dueDay?: number | null;
       }): Promise<{
         categories: import('./shared/types').BudgetCategory[];
         subcategories: import('./shared/types').BudgetSubcategory[];
@@ -123,17 +125,33 @@ interface Window {
         profileId: number,
         budgetId: number | null
       ): Promise<import('./shared/types').Transaction[]>;
+      listByBudgetPage(input: {
+        profileId: number;
+        budgetId: number | null;
+        limit?: number;
+        offset?: number;
+        q?: string | null;
+        dateFrom?: string | null;
+        dateTo?: string | null;
+        subcategoryId?: number | null;
+      }): Promise<{
+        rows: import('./shared/types').Transaction[];
+        total: number;
+      }>;
       listUnexpected(
         profileId: number,
-        budgetId: number
+        budgetId: number,
+        month?: string | null
       ): Promise<import('./shared/types').Transaction[]>;
       listPurchases(
         profileId: number,
-        budgetId: number
+        budgetId: number,
+        month?: string | null
       ): Promise<import('./shared/types').Transaction[]>;
       listGoalContributions(
         profileId: number,
-        budgetId: number
+        budgetId: number,
+        month?: string | null
       ): Promise<import('./shared/types').Transaction[]>;
       createManual(input: {
         profileId: number;

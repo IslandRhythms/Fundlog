@@ -21,6 +21,34 @@ const db = (): Database.Database => getDb();
 
 const now = () => new Date().toISOString();
 
+const TX_COLS = `id, profile_id AS profileId, budget_id AS budgetId,
+                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
+                description, source, goal_id AS goalId, entry_kind AS entryKind,
+                created_at AS createdAt, updated_at AS updatedAt`;
+
+/** Window covering `month` plus lookback so multi-month spreads can still impact it. */
+function monthWindowWithSpreadLookback(month: string): {
+  start: string;
+  endExclusive: string;
+} {
+  const m = /^(\d{4})-(\d{2})$/.exec(month.trim());
+  if (!m) throw new TypeError('Invalid month; expected YYYY-MM');
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (mo < 1 || mo > 12) throw new TypeError('Invalid month');
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const endExclusive =
+    mo === 12 ? `${y + 1}-01-01` : `${y}-${pad(mo + 1)}-01`;
+  let sy = y;
+  let sm = mo - 60;
+  while (sm < 1) {
+    sm += 12;
+    sy -= 1;
+  }
+  const start = `${sy}-${pad(sm)}-01`;
+  return { start, endExclusive };
+}
+
 /** `month` is YYYY-MM. Returns [start, endExclusive) as ISO date strings. */
 function isoMonthRange(month: string): { start: string; endExclusive: string } {
   const m = /^(\d{4})-(\d{2})$/.exec(month.trim());
@@ -267,7 +295,8 @@ export const CategoryRepository = {
                 label, target_percent AS targetPercent, target_amount AS targetAmount,
                 min_amount AS minAmount, max_amount AS maxAmount,
                 is_flexible AS isFlexible, spread_months AS spreadMonths,
-                spread_start_month AS spreadStartMonth, sort_order AS sortOrder
+                spread_start_month AS spreadStartMonth, due_day AS dueDay,
+                sort_order AS sortOrder
          FROM budget_subcategories
          WHERE budget_id = ?
          ORDER BY sort_order ASC`
@@ -297,13 +326,18 @@ export const CategoryRepository = {
     isFlexible: boolean;
     spreadMonths?: number;
     spreadStartMonth?: string | null;
+    dueDay?: number | null;
     sortOrder?: number;
   }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
     const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
+    const dueDay =
+      spreadMonths > 1 && input.dueDay != null && Number.isFinite(input.dueDay)
+        ? Math.min(31, Math.max(1, Math.floor(input.dueDay)))
+        : null;
     const stmt = db().prepare(
       `INSERT INTO budget_subcategories
-       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, spread_months, spread_start_month, sort_order)
-       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @spreadMonths, @spreadStartMonth, @sortOrder)`
+       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, spread_months, spread_start_month, due_day, sort_order)
+       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @spreadMonths, @spreadStartMonth, @dueDay, @sortOrder)`
     );
     stmt.run({
       budgetId: input.budgetId,
@@ -317,6 +351,7 @@ export const CategoryRepository = {
       spreadMonths,
       spreadStartMonth:
         spreadMonths > 1 ? input.spreadStartMonth ?? null : null,
+      dueDay,
       sortOrder: input.sortOrder ?? 99,
     });
     return this.listByBudget(input.budgetId);
@@ -332,8 +367,13 @@ export const CategoryRepository = {
     isFlexible: boolean;
     spreadMonths?: number;
     spreadStartMonth?: string | null;
+    dueDay?: number | null;
   }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
     const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
+    const dueDay =
+      spreadMonths > 1 && input.dueDay != null && Number.isFinite(input.dueDay)
+        ? Math.min(31, Math.max(1, Math.floor(input.dueDay)))
+        : null;
     db()
       .prepare(
         `UPDATE budget_subcategories
@@ -344,7 +384,8 @@ export const CategoryRepository = {
              max_amount = @maxAmount,
              is_flexible = @isFlexible,
              spread_months = @spreadMonths,
-             spread_start_month = @spreadStartMonth
+             spread_start_month = @spreadStartMonth,
+             due_day = @dueDay
          WHERE id = @id AND budget_id = @budgetId`,
       )
       .run({
@@ -359,6 +400,7 @@ export const CategoryRepository = {
         spreadMonths,
         spreadStartMonth:
           spreadMonths > 1 ? input.spreadStartMonth ?? null : null,
+        dueDay,
       });
     return this.listByBudget(input.budgetId);
   },
@@ -375,10 +417,7 @@ export const CategoryRepository = {
 
 export const TransactionRepository = {
   listByBudget(profileId: number, budgetId: number | null): Transaction[] {
-    const cols = `id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
-                description, source, goal_id AS goalId, entry_kind AS entryKind,
-                created_at AS createdAt, updated_at AS updatedAt`;
+    const cols = TX_COLS;
     const stmt = budgetId
       ? `SELECT ${cols}
          FROM transactions
@@ -392,48 +431,146 @@ export const TransactionRepository = {
       .prepare(stmt)
       .all(budgetId ? [profileId, budgetId] : [profileId]) as Transaction[];
   },
-  listUnexpected(profileId: number, budgetId: number): Transaction[] {
-    return db()
+
+  listByBudgetPage(input: {
+    profileId: number;
+    budgetId: number | null;
+    limit?: number;
+    offset?: number;
+    q?: string | null;
+    dateFrom?: string | null;
+    dateTo?: string | null;
+    subcategoryId?: number | null;
+  }): { rows: Transaction[]; total: number } {
+    const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 50)));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const where: string[] = ['profile_id = @profileId'];
+    const params: Record<string, unknown> = { profileId: input.profileId };
+
+    if (input.budgetId != null) {
+      where.push('budget_id = @budgetId');
+      params.budgetId = input.budgetId;
+    }
+    if (input.subcategoryId != null) {
+      where.push('subcategory_id = @subcategoryId');
+      params.subcategoryId = input.subcategoryId;
+    }
+    if (input.dateFrom?.trim()) {
+      where.push('date >= @dateFrom');
+      params.dateFrom = input.dateFrom.trim().slice(0, 10);
+    }
+    if (input.dateTo?.trim()) {
+      where.push('date <= @dateTo');
+      params.dateTo = input.dateTo.trim().slice(0, 10);
+    }
+    const q = input.q?.trim();
+    if (q) {
+      where.push(
+        '(IFNULL(merchant, "") LIKE @q OR IFNULL(description, "") LIKE @q)',
+      );
+      params.q = `%${q}%`;
+    }
+
+    const whereSql = where.join(' AND ');
+    const total = (
+      db()
+        .prepare(`SELECT COUNT(*) AS c FROM transactions WHERE ${whereSql}`)
+        .get(params) as { c: number }
+    ).c;
+    const rows = db()
       .prepare(
-        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
-                description, source, goal_id AS goalId, entry_kind AS entryKind,
-                created_at AS createdAt, updated_at AS updatedAt
+        `SELECT ${TX_COLS}
          FROM transactions
-         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
-           AND goal_id IS NULL AND entry_kind = 'unexpected'
-         ORDER BY date DESC, created_at DESC`,
+         WHERE ${whereSql}
+         ORDER BY date DESC, created_at DESC
+         LIMIT @limit OFFSET @offset`,
       )
-      .all(profileId, budgetId) as Transaction[];
+      .all({ ...params, limit, offset }) as Transaction[];
+    return { rows, total };
   },
-  listPurchases(profileId: number, budgetId: number): Transaction[] {
-    return db()
-      .prepare(
-        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
-                description, source, goal_id AS goalId, entry_kind AS entryKind,
-                created_at AS createdAt, updated_at AS updatedAt
-         FROM transactions
-         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
-           AND goal_id IS NULL AND entry_kind = 'purchase'
-         ORDER BY date DESC, created_at DESC`,
-      )
-      .all(profileId, budgetId) as Transaction[];
+
+  listUnexpected(
+    profileId: number,
+    budgetId: number,
+    month?: string | null,
+  ): Transaction[] {
+    return this.listManualKind(profileId, budgetId, 'unexpected', month);
+  },
+  listPurchases(
+    profileId: number,
+    budgetId: number,
+    month?: string | null,
+  ): Transaction[] {
+    return this.listManualKind(profileId, budgetId, 'purchase', month);
   },
   /** Manual transactions tied to a goal (Record savings); excluded from unexpected totals. */
-  listGoalContributions(profileId: number, budgetId: number): Transaction[] {
+  listGoalContributions(
+    profileId: number,
+    budgetId: number,
+    month?: string | null,
+  ): Transaction[] {
+    const { start, endExclusive } = month
+      ? monthWindowWithSpreadLookback(month)
+      : { start: null, endExclusive: null };
+    if (start && endExclusive) {
+      return db()
+        .prepare(
+          `SELECT ${TX_COLS}
+           FROM transactions
+           WHERE profile_id = ? AND budget_id = ? AND source = 'manual' AND goal_id IS NOT NULL
+             AND date >= ? AND date < ?
+           ORDER BY date DESC, created_at DESC`,
+        )
+        .all(profileId, budgetId, start, endExclusive) as Transaction[];
+    }
     return db()
       .prepare(
-        `SELECT id, profile_id AS profileId, budget_id AS budgetId,
-                subcategory_id AS subcategoryId, date, amount, spread_months AS spreadMonths, merchant,
-                description, source, goal_id AS goalId, entry_kind AS entryKind,
-                created_at AS createdAt, updated_at AS updatedAt
+        `SELECT ${TX_COLS}
          FROM transactions
          WHERE profile_id = ? AND budget_id = ? AND source = 'manual' AND goal_id IS NOT NULL
          ORDER BY date DESC, created_at DESC`,
       )
       .all(profileId, budgetId) as Transaction[];
   },
+
+  listManualKind(
+    profileId: number,
+    budgetId: number,
+    entryKind: 'purchase' | 'unexpected',
+    month?: string | null,
+  ): Transaction[] {
+    const { start, endExclusive } = month
+      ? monthWindowWithSpreadLookback(month)
+      : { start: null, endExclusive: null };
+    if (start && endExclusive) {
+      return db()
+        .prepare(
+          `SELECT ${TX_COLS}
+           FROM transactions
+           WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
+             AND goal_id IS NULL AND entry_kind = ?
+             AND date >= ? AND date < ?
+           ORDER BY date DESC, created_at DESC`,
+        )
+        .all(
+          profileId,
+          budgetId,
+          entryKind,
+          start,
+          endExclusive,
+        ) as Transaction[];
+    }
+    return db()
+      .prepare(
+        `SELECT ${TX_COLS}
+         FROM transactions
+         WHERE profile_id = ? AND budget_id = ? AND source = 'manual'
+           AND goal_id IS NULL AND entry_kind = ?
+         ORDER BY date DESC, created_at DESC`,
+      )
+      .all(profileId, budgetId, entryKind) as Transaction[];
+  },
+
   createBulk(input: {
     profileId: number;
     budgetId: number | null;
@@ -1000,6 +1137,30 @@ function mapCreditCard(
 }
 
 export const CreditCardRepository = {
+  getById(id: number): CreditCard | null {
+    const row = db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, name, issuer, last_four AS lastFour,
+                network, annual_fee AS annualFee, benefits_notes AS benefitsNotes,
+                active_perk_id AS activePerkId, created_at AS createdAt, updated_at AS updatedAt
+         FROM credit_cards
+         WHERE id = ?`,
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const perkRows = db()
+      .prepare(
+        `SELECT id, card_id AS cardId, label, category_tags AS categoryTags,
+                cashback_detail AS cashbackDetail, sort_order AS sortOrder,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM credit_card_perks
+         WHERE card_id = ?
+         ORDER BY sort_order ASC, id ASC`,
+      )
+      .all(id) as Record<string, unknown>[];
+    return mapCreditCard(row, perkRows.map(mapCreditCardPerk));
+  },
+
   listByProfile(profileId: number): CreditCard[] {
     const rows = db()
       .prepare(
@@ -1011,21 +1172,29 @@ export const CreditCardRepository = {
          ORDER BY name ASC`,
       )
       .all(profileId) as Record<string, unknown>[];
-    return rows.map((row) => {
-      const id = row.id as number;
-      const perkRows = db()
-        .prepare(
-          `SELECT id, card_id AS cardId, label, category_tags AS categoryTags,
-                  cashback_detail AS cashbackDetail, sort_order AS sortOrder,
-                  created_at AS createdAt, updated_at AS updatedAt
-           FROM credit_card_perks
-           WHERE card_id = ?
-           ORDER BY sort_order ASC, id ASC`,
-        )
-        .all(id) as Record<string, unknown>[];
-      const perks = perkRows.map(mapCreditCardPerk);
-      return mapCreditCard(row, perks);
-    });
+    if (!rows.length) return [];
+    const ids = rows.map((r) => r.id as number);
+    const placeholders = ids.map(() => '?').join(',');
+    const perkRows = db()
+      .prepare(
+        `SELECT id, card_id AS cardId, label, category_tags AS categoryTags,
+                cashback_detail AS cashbackDetail, sort_order AS sortOrder,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM credit_card_perks
+         WHERE card_id IN (${placeholders})
+         ORDER BY sort_order ASC, id ASC`,
+      )
+      .all(...ids) as Record<string, unknown>[];
+    const perksByCard = new Map<number, CreditCardPerk[]>();
+    for (const pr of perkRows) {
+      const perk = mapCreditCardPerk(pr);
+      const list = perksByCard.get(perk.cardId) ?? [];
+      list.push(perk);
+      perksByCard.set(perk.cardId, list);
+    }
+    return rows.map((row) =>
+      mapCreditCard(row, perksByCard.get(row.id as number) ?? []),
+    );
   },
 
   create(input: {
@@ -1055,7 +1224,7 @@ export const CreditCardRepository = {
         createdAt,
       });
     const id = Number(result.lastInsertRowid);
-    return this.listByProfile(input.profileId).find((c) => c.id === id)!;
+    return this.getById(id)!;
   },
 
   update(input: {
@@ -1085,10 +1254,7 @@ export const CreditCardRepository = {
         benefitsNotes: input.benefitsNotes?.trim() || null,
         updatedAt,
       });
-    const row = db()
-      .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
-      .get(input.id) as { profileId: number };
-    return this.listByProfile(row.profileId).find((c) => c.id === input.id)!;
+    return this.getById(input.id)!;
   },
 
   delete(id: number): void {
@@ -1123,12 +1289,7 @@ export const CreditCardRepository = {
         sortOrder: input.sortOrder ?? maxSort,
         createdAt,
       });
-    const pid = (
-      db()
-        .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
-        .get(input.cardId) as { profileId: number }
-    ).profileId;
-    return this.listByProfile(pid).find((c) => c.id === input.cardId)!;
+    return this.getById(input.cardId)!;
   },
 
   updatePerk(input: {
@@ -1176,12 +1337,7 @@ export const CreditCardRepository = {
         'SELECT card_id AS cardId FROM credit_card_perks WHERE id = ?',
       )
       .get(input.id) as { cardId: number };
-    const pid = (
-      db()
-        .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
-        .get(row.cardId) as { profileId: number }
-    ).profileId;
-    return this.listByProfile(pid).find((c) => c.id === row.cardId)!;
+    return this.getById(row.cardId)!;
   },
 
   deletePerk(perkId: number): void {
@@ -1214,12 +1370,7 @@ export const CreditCardRepository = {
         'UPDATE credit_cards SET active_perk_id = ?, updated_at = ? WHERE id = ?',
       )
       .run(perkId, updatedAt, cardId);
-    const pid = (
-      db()
-        .prepare('SELECT profile_id AS profileId FROM credit_cards WHERE id = ?')
-        .get(cardId) as { profileId: number }
-    ).profileId;
-    return this.listByProfile(pid).find((c) => c.id === cardId)!;
+    return this.getById(cardId)!;
   },
 };
 
@@ -1280,6 +1431,28 @@ function requireAccountForProfile(
 }
 
 export const PortfolioAccountRepository = {
+  getById(id: number): PortfolioAccount | null {
+    const row = db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, name, note,
+                sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+         FROM portfolio_accounts
+         WHERE id = ?`,
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const snapRows = db()
+      .prepare(
+        `SELECT id, account_id AS accountId, date, value,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM portfolio_snapshots
+         WHERE account_id = ?
+         ORDER BY date ASC, id ASC`,
+      )
+      .all(id) as Record<string, unknown>[];
+    return mapPortfolioAccount(row, snapRows.map(mapPortfolioSnapshot));
+  },
+
   listByProfile(profileId: number): PortfolioAccount[] {
     const rows = db()
       .prepare(
@@ -1290,19 +1463,28 @@ export const PortfolioAccountRepository = {
          ORDER BY sort_order ASC, name ASC, id ASC`,
       )
       .all(profileId) as Record<string, unknown>[];
-    return rows.map((row) => {
-      const id = row.id as number;
-      const snapRows = db()
-        .prepare(
-          `SELECT id, account_id AS accountId, date, value,
-                  created_at AS createdAt, updated_at AS updatedAt
-           FROM portfolio_snapshots
-           WHERE account_id = ?
-           ORDER BY date ASC, id ASC`,
-        )
-        .all(id) as Record<string, unknown>[];
-      return mapPortfolioAccount(row, snapRows.map(mapPortfolioSnapshot));
-    });
+    if (!rows.length) return [];
+    const ids = rows.map((r) => r.id as number);
+    const placeholders = ids.map(() => '?').join(',');
+    const snapRows = db()
+      .prepare(
+        `SELECT id, account_id AS accountId, date, value,
+                created_at AS createdAt, updated_at AS updatedAt
+         FROM portfolio_snapshots
+         WHERE account_id IN (${placeholders})
+         ORDER BY date ASC, id ASC`,
+      )
+      .all(...ids) as Record<string, unknown>[];
+    const snapsByAccount = new Map<number, PortfolioSnapshot[]>();
+    for (const sr of snapRows) {
+      const snap = mapPortfolioSnapshot(sr);
+      const list = snapsByAccount.get(snap.accountId) ?? [];
+      list.push(snap);
+      snapsByAccount.set(snap.accountId, list);
+    }
+    return rows.map((row) =>
+      mapPortfolioAccount(row, snapsByAccount.get(row.id as number) ?? []),
+    );
   },
 
   create(input: {
@@ -1336,7 +1518,7 @@ export const PortfolioAccountRepository = {
         createdAt,
       });
     const id = Number(result.lastInsertRowid);
-    return this.listByProfile(input.profileId).find((a) => a.id === id)!;
+    return this.getById(id)!;
   },
 
   update(input: {
@@ -1380,7 +1562,7 @@ export const PortfolioAccountRepository = {
           updatedAt,
         });
     }
-    return this.listByProfile(input.profileId).find((a) => a.id === input.id)!;
+    return this.getById(input.id)!;
   },
 
   delete(input: { id: number; profileId: number }): void {
@@ -1419,9 +1601,7 @@ export const PortfolioAccountRepository = {
         'UPDATE portfolio_accounts SET updated_at = ? WHERE id = ?',
       )
       .run(stamp, input.accountId);
-    return this.listByProfile(input.profileId).find(
-      (a) => a.id === input.accountId,
-    )!;
+    return this.getById(input.accountId)!;
   },
 
   updateSnapshot(input: {
@@ -1466,9 +1646,7 @@ export const PortfolioAccountRepository = {
         'UPDATE portfolio_accounts SET updated_at = ? WHERE id = ?',
       )
       .run(updatedAt, existing.accountId);
-    return this.listByProfile(input.profileId).find(
-      (a) => a.id === existing.accountId,
-    )!;
+    return this.getById(existing.accountId)!;
   },
 
   deleteSnapshot(input: { id: number; profileId: number }): void {

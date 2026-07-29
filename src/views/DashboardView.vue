@@ -17,6 +17,7 @@ import {
   monthlyPlanTowardGoal,
 } from '../shared/goalBudgetProgress';
 import { calendarMonthNow } from '../shared/calendarMonth';
+import { upcomingDuesFromSubs } from '../shared/recurringDue';
 import type {
   BudgetCategory,
   BudgetSubcategory,
@@ -39,12 +40,13 @@ const subcategories = ref<BudgetSubcategory[]>([]);
 const unexpectedTxs = ref<Transaction[]>([]);
 const purchaseTxs = ref<Transaction[]>([]);
 const goalContributionTxs = ref<Transaction[]>([]);
+const allGoalContributionTxs = ref<Transaction[]>([]);
+const recentTxs = ref<Transaction[]>([]);
 const goalAllocations = ref<GoalAllocation[]>([]);
 const loading = ref(false);
 
 const activeBudget = computed(() => domain.activeBudget);
 const goals = computed(() => domain.goals);
-const transactions = computed(() => domain.transactions);
 
 const groupedSubcategories = computed(() => {
   const grouped: Record<number, BudgetSubcategory[]> = {};
@@ -63,23 +65,28 @@ async function loadCategories() {
     const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = result.categories;
     subcategories.value = result.subcategories;
-    const [unexpected, purchases, goalContrib] = await Promise.all([
-      window.fundlog.transaction.listUnexpected(
-        domain.activeProfileId,
-        activeBudget.value.id,
-      ),
-      window.fundlog.transaction.listPurchases(
-        domain.activeProfileId,
-        activeBudget.value.id,
-      ),
-      window.fundlog.transaction.listGoalContributions(
-        domain.activeProfileId,
-        activeBudget.value.id,
-      ),
-    ]);
+    const month = calendarMonthNow();
+    const profileId = domain.activeProfileId;
+    const budgetId = activeBudget.value.id;
+    const [unexpected, purchases, goalContrib, allGoalContrib, recentPage] =
+      await Promise.all([
+        window.fundlog.transaction.listUnexpected(profileId, budgetId, month),
+        window.fundlog.transaction.listPurchases(profileId, budgetId, month),
+        window.fundlog.transaction.listGoalContributions(profileId, budgetId, month),
+        window.fundlog.transaction.listGoalContributions(profileId, budgetId),
+        window.fundlog.transaction.listByBudgetPage({
+          profileId,
+          budgetId,
+          dateFrom: `${month}-01`,
+          dateTo: `${month}-31`,
+          limit: 5,
+        }),
+      ]);
     unexpectedTxs.value = unexpected;
     purchaseTxs.value = purchases;
     goalContributionTxs.value = goalContrib;
+    allGoalContributionTxs.value = allGoalContrib;
+    recentTxs.value = recentPage.rows;
   } finally {
     loading.value = false;
   }
@@ -103,7 +110,6 @@ onMounted(async () => {
   await domain.loadProfiles();
   await domain.loadBudgets();
   await domain.loadGoals();
-  await domain.loadTransactions();
   await loadCategories();
   await loadGoalAllocations();
 });
@@ -156,6 +162,15 @@ const monthLabel = computed(() => {
 
 const pieSegments = computed(() => buildPieSegments(plannedBarResult.value, monthlyIncome.value));
 
+const upcomingDues = computed(() =>
+  upcomingDuesFromSubs(
+    subcategories.value,
+    new Date().toISOString().slice(0, 10),
+    30,
+    calendarMonthNow(),
+  ),
+);
+
 const tierBreakdown = computed(() =>
   computeTierBreakdown(
     categories.value,
@@ -171,11 +186,6 @@ const allocationTargetCaption = computed(() => {
   if (!b) return '';
   if (b.ruleSet === 'fiftyThirtyTwenty') return '50 / 30 / 20 rule targets';
   return 'Custom category targets';
-});
-
-const recentTransactions = computed(() => {
-  const month = calendarMonthNow();
-  return transactions.value.filter((tx) => tx.date.slice(0, 7) === month).slice(0, 5);
 });
 
 function formatTxTitle(tx: Transaction) {
@@ -208,7 +218,7 @@ function formatGoalDate(iso: string | null) {
 }
 
 function savedTowardGoal(goalId: number): number {
-  return transactions.value
+  return allGoalContributionTxs.value
     .filter((t) => t.goalId === goalId)
     .reduce((sum, t) => sum + t.amount, 0);
 }
@@ -283,6 +293,28 @@ function activityKindDetail(tx: Transaction): string | null {
       <RouterLink to="/goals" class="btn btn-sm btn-outline-secondary">
         New goal
       </RouterLink>
+    </div>
+
+    <div v-if="upcomingDues.length" class="card border shadow-none mb-4">
+      <div class="card-body p-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+          <h3 class="h6 mb-0">Due soon</h3>
+          <RouterLink to="/budgets" class="small">View on Budgets</RouterLink>
+        </div>
+        <ul class="list-unstyled mb-0 vstack gap-1">
+          <li
+            v-for="due in upcomingDues.slice(0, 5)"
+            :key="due.subcategoryId"
+            class="d-flex flex-wrap justify-content-between gap-2 small"
+          >
+            <span>
+              {{ due.label }}
+              <span class="text-muted">· {{ due.dueDate }}</span>
+            </span>
+            <span>{{ formatGoalMoney(due.amount) }}</span>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <div class="row g-3">
@@ -413,16 +445,16 @@ function activityKindDetail(tx: Transaction): string | null {
       <div class="col-12">
         <CollapsibleSection
           title="Recent activity"
-          :meta="recentTransactions.length ? `${recentTransactions.length} this month` : 'No activity this month'"
+          :meta="recentTxs.length ? `${recentTxs.length} this month` : 'No activity this month'"
           :default-expanded="false"
           storage-key="dashboard-recent-activity"
         >
-            <p v-if="!recentTransactions.length" class="small mb-0">
+            <p v-if="!recentTxs.length" class="small mb-0">
               No transactions this month yet. Import CSV or add activity to see it here.
             </p>
             <ul v-else class="list-unstyled mb-0 dashboard-activity-list">
               <li
-                v-for="tx in recentTransactions"
+                v-for="tx in recentTxs"
                 :key="tx.id"
                 class="dashboard-activity-row"
               >

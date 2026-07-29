@@ -262,6 +262,11 @@ ipcMain.handle(
 
     try {
       await getDb().backup(dest);
+      const previous = readAppPrefs();
+      writeAppPrefs({
+        ...previous,
+        lastBackupAt: new Date().toISOString(),
+      });
       return { ok: true, path: dest };
     } catch (err) {
       return {
@@ -380,6 +385,7 @@ ipcMain.handle(
       isFlexible: boolean;
       spreadMonths?: number;
       spreadStartMonth?: string | null;
+      dueDay?: number | null;
       sortOrder?: number;
     },
   ) => {
@@ -402,6 +408,7 @@ ipcMain.handle(
       isFlexible: boolean;
       spreadMonths?: number;
       spreadStartMonth?: string | null;
+      dueDay?: number | null;
     },
   ) => {
     return CategoryRepository.updateSubcategory(args);
@@ -423,23 +430,63 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'transaction:listByBudgetPage',
+  (
+    _event,
+    args: {
+      profileId: number;
+      budgetId: number | null;
+      limit?: number;
+      offset?: number;
+      q?: string | null;
+      dateFrom?: string | null;
+      dateTo?: string | null;
+      subcategoryId?: number | null;
+    },
+  ) => {
+    return TransactionRepository.listByBudgetPage(args);
+  },
+);
+
+ipcMain.handle(
   'transaction:listUnexpected',
-  (_event, args: { profileId: number; budgetId: number }) => {
-    return TransactionRepository.listUnexpected(args.profileId, args.budgetId);
+  (
+    _event,
+    args: { profileId: number; budgetId: number; month?: string | null },
+  ) => {
+    return TransactionRepository.listUnexpected(
+      args.profileId,
+      args.budgetId,
+      args.month,
+    );
   },
 );
 
 ipcMain.handle(
   'transaction:listPurchases',
-  (_event, args: { profileId: number; budgetId: number }) => {
-    return TransactionRepository.listPurchases(args.profileId, args.budgetId);
+  (
+    _event,
+    args: { profileId: number; budgetId: number; month?: string | null },
+  ) => {
+    return TransactionRepository.listPurchases(
+      args.profileId,
+      args.budgetId,
+      args.month,
+    );
   },
 );
 
 ipcMain.handle(
   'transaction:listGoalContributions',
-  (_event, args: { profileId: number; budgetId: number }) => {
-    return TransactionRepository.listGoalContributions(args.profileId, args.budgetId);
+  (
+    _event,
+    args: { profileId: number; budgetId: number; month?: string | null },
+  ) => {
+    return TransactionRepository.listGoalContributions(
+      args.profileId,
+      args.budgetId,
+      args.month,
+    );
   },
 );
 

@@ -107,7 +107,21 @@ export const useUiStore = defineStore('ui', {
     theme: 'system' as Theme,
     resolvedTheme: 'light' as 'light' | 'dark',
     customTheme: null as CustomThemeConfig | null,
+    backupReminderDays: 7 as number,
+    lastBackupAt: null as string | null,
+    backupBannerDismissed: false,
   }),
+  getters: {
+    backupOverdue(state): boolean {
+      if (!state.backupReminderDays || state.backupReminderDays <= 0) return false;
+      if (state.backupBannerDismissed) return false;
+      if (!state.lastBackupAt) return true;
+      const last = Date.parse(state.lastBackupAt);
+      if (!Number.isFinite(last)) return true;
+      const ageMs = Date.now() - last;
+      return ageMs >= state.backupReminderDays * 24 * 60 * 60 * 1000;
+    },
+  },
   actions: {
     async initTheme() {
       if (!window.fundlog?.theme) return;
@@ -116,6 +130,30 @@ export const useUiStore = defineStore('ui', {
       this.resolvedTheme = state.resolved;
       applyResolvedThemeToDocument(state.resolved);
       await this.loadCustomThemeFromPrefs();
+      await this.loadBackupPrefs();
+    },
+    async loadBackupPrefs() {
+      if (!window.fundlog?.preferences) return;
+      const prefs = await window.fundlog.preferences.get();
+      this.backupReminderDays =
+        prefs.backupReminderDays == null ? 7 : Math.max(0, Math.floor(prefs.backupReminderDays));
+      this.lastBackupAt = prefs.lastBackupAt ?? null;
+    },
+    async saveBackupReminderDays(days: number) {
+      if (!window.fundlog?.preferences) return;
+      const n = Math.max(0, Math.floor(days));
+      await window.fundlog.preferences.set({ backupReminderDays: n });
+      this.backupReminderDays = n;
+      this.backupBannerDismissed = false;
+    },
+    async refreshLastBackupAt() {
+      if (!window.fundlog?.preferences) return;
+      const prefs = await window.fundlog.preferences.get();
+      this.lastBackupAt = prefs.lastBackupAt ?? null;
+      this.backupBannerDismissed = false;
+    },
+    dismissBackupBanner() {
+      this.backupBannerDismissed = true;
     },
     async loadCustomThemeFromPrefs() {
       if (!window.fundlog?.preferences) return;

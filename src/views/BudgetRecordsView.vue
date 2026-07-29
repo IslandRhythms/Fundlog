@@ -97,7 +97,6 @@ async function confirmClearMonthActivity() {
       activeBudget.value.id,
       clearActivityMonth.value,
     );
-    await domain.loadTransactions();
     await load();
     toast.success(
       deleted

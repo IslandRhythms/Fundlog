@@ -73,7 +73,6 @@ export const useDomainStore = defineStore('domain', {
           this.activeBudgetId =
             budgets.find((b: Budget) => b.isActive)?.id ?? budgets[0].id;
         }
-        await this.loadTransactions();
         await this.loadBudgetIncomeBoosts();
       } catch (err) {
         console.error(err);

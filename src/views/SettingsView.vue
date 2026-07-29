@@ -22,6 +22,9 @@ const dbLocation = ref<Awaited<
 const dbLocationLoading = ref(false);
 const dbLocationSaving = ref(false);
 const dbExporting = ref(false);
+const backupReminderDays = ref(7);
+const lastBackupAt = ref<string | null>(null);
+const backupPrefsSaving = ref(false);
 
 const customThemeEnabled = ref(false);
 const customThemeSaving = ref(false);
@@ -143,6 +146,9 @@ onMounted(async () => {
   await refreshDbLocation();
   const prefs = await window.fundlog.preferences.get();
   loadCustomThemeForm(prefs);
+  backupReminderDays.value =
+    prefs.backupReminderDays == null ? 7 : Math.max(0, Math.floor(prefs.backupReminderDays));
+  lastBackupAt.value = prefs.lastBackupAt ?? null;
 });
 
 async function refreshDbLocation() {
@@ -209,6 +215,8 @@ async function exportDatabaseCopy() {
     const result = await window.fundlog.database.exportCopy();
     if (result.ok) {
       toast.success(`Database exported to ${result.path}`);
+      await ui.refreshLastBackupAt();
+      lastBackupAt.value = ui.lastBackupAt;
     } else if ('canceled' in result && result.canceled) {
       /* dialog dismissed */
     } else if ('error' in result) {
@@ -217,6 +225,26 @@ async function exportDatabaseCopy() {
   } finally {
     dbExporting.value = false;
   }
+}
+
+async function saveBackupReminder() {
+  backupPrefsSaving.value = true;
+  try {
+    await ui.saveBackupReminderDays(backupReminderDays.value);
+    toast.success('Backup reminder saved.');
+  } catch (e) {
+    console.error(e);
+    toast.error('Could not save backup reminder.');
+  } finally {
+    backupPrefsSaving.value = false;
+  }
+}
+
+function formatBackupAt(iso: string | null): string {
+  if (!iso) return 'Never';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
 }
 
 const profiles = computed(() =>
@@ -386,6 +414,35 @@ async function submitProfile() {
                   Save a snapshot of your data to another file (for example a USB drive or cloud
                   folder). Uses a safe SQLite backup while the app is running.
                 </p>
+                <p class="small text-muted mb-2">
+                  Last backup: {{ formatBackupAt(lastBackupAt) }}
+                </p>
+                <div class="row g-2 align-items-end mb-3">
+                  <div class="col-sm-6 col-md-4">
+                    <label class="form-label small mb-1" for="backup-reminder-days">
+                      Remind every (days)
+                    </label>
+                    <input
+                      id="backup-reminder-days"
+                      v-model.number="backupReminderDays"
+                      type="number"
+                      min="0"
+                      max="365"
+                      class="form-control form-control-sm"
+                    />
+                    <p class="form-text mb-0">0 turns the reminder off. Default is 7.</p>
+                  </div>
+                  <div class="col-auto">
+                    <button
+                      type="button"
+                      class="btn btn-outline-secondary btn-sm"
+                      :disabled="backupPrefsSaving"
+                      @click="saveBackupReminder"
+                    >
+                      Save reminder
+                    </button>
+                  </div>
+                </div>
                 <button
                   type="button"
                   class="btn btn-outline-primary btn-sm"

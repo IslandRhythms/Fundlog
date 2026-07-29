@@ -125,14 +125,17 @@ async function loadBudgetDetails() {
     const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = result.categories;
     subcategories.value = result.subcategories;
+    const month = calendarMonthNow();
     const [unexpected, purchases, goalContrib] = await Promise.all([
       window.fundlog.transaction.listUnexpected(
         domain.activeProfileId,
         activeBudget.value.id,
+        month,
       ),
       window.fundlog.transaction.listPurchases(
         domain.activeProfileId,
         activeBudget.value.id,
+        month,
       ),
       window.fundlog.transaction.listGoalContributions(
         domain.activeProfileId,
@@ -165,7 +168,6 @@ async function loadGoalAllocations() {
 onMounted(async () => {
   await domain.loadProfiles();
   await domain.loadBudgets();
-  await domain.loadTransactions();
   await domain.loadGoals();
   await loadBudgetDetails();
   await loadGoalAllocations();
@@ -174,7 +176,6 @@ onMounted(async () => {
 watch(
   () => domain.activeBudgetId,
   async () => {
-    await domain.loadTransactions();
     await loadBudgetDetails();
     await loadGoalAllocations();
   },
@@ -264,7 +265,7 @@ function currencyCode() {
 }
 
 function savedTowardGoal(goalId: number): number {
-  return domain.transactions
+  return goalContributionTxs.value
     .filter((t) => t.goalId === goalId)
     .reduce((sum, t) => sum + t.amount, 0);
 }
@@ -594,7 +595,7 @@ async function submitRecordContribution() {
       description: desc || `Savings: ${g.name}`,
       goalId: g.id,
     });
-    await domain.loadTransactions();
+    await loadBudgetDetails();
     toast.success('Saved toward goal.');
     hideBsModal('recordGoalContributionModal');
   } catch (e) {

@@ -1,11 +1,16 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useToast } from 'vue-toastification';
 import { useUiStore } from './stores/ui';
 import logoAndTitleUrl from './assets/logo-and-title.png';
 
 const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
+
+const backupExporting = ref(false);
 
 type NavItem = { path: string; label: string };
 type NavSection = { heading: string; items: NavItem[] };
@@ -47,6 +52,21 @@ function go(path: string) {
 
 function navItemActive(path: string) {
   return route.path === path;
+}
+
+async function exportBackupNow() {
+  backupExporting.value = true;
+  try {
+    const result = await window.fundlog.database.exportCopy();
+    if (result.ok) {
+      toast.success(`Database exported to ${result.path}`);
+      await ui.refreshLastBackupAt();
+    } else if ('error' in result && result.error) {
+      toast.error(result.error);
+    }
+  } finally {
+    backupExporting.value = false;
+  }
 }
 </script>
 
@@ -128,6 +148,32 @@ function navItemActive(path: string) {
       </aside>
       <main class="main col">
         <section class="main-content">
+          <div
+            v-if="ui.backupOverdue"
+            class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"
+            role="status"
+          >
+            <span class="small mb-0">
+              Database backup is due. Export a copy to keep your data safe.
+            </span>
+            <div class="d-flex flex-wrap gap-2">
+              <button
+                type="button"
+                class="btn btn-sm btn-warning"
+                :disabled="backupExporting"
+                @click="exportBackupNow"
+              >
+                {{ backupExporting ? 'Exporting…' : 'Export now' }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary"
+                @click="ui.dismissBackupBanner()"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
           <router-view />
         </section>
       </main>

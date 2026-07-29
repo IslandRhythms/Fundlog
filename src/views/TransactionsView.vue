@@ -1,20 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
 import { formatMoney as formatMoneyExact } from '../shared/formatMoney';
-import type { Transaction, Receipt } from '../shared/types';
+import type {
+  BudgetCategory,
+  BudgetSubcategory,
+  Transaction,
+  Receipt,
+} from '../shared/types';
 
 const domain = useDomainStore();
 const router = useRouter();
 const toast = useToast();
 
+const PAGE_SIZE = 50;
+
 const loading = ref(false);
 const receiptMap = ref<Record<number, Receipt[]>>({});
 const statusMessage = ref<string | null>(null);
+
+const pageRows = ref<Transaction[]>([]);
+const totalCount = ref(0);
+const pageIndex = ref(0);
+
+const filterQ = ref('');
+const filterDateFrom = ref('');
+const filterDateTo = ref('');
+const filterSubcategoryId = ref<number | null>(null);
+
+const subcategories = ref<BudgetSubcategory[]>([]);
+const categories = ref<BudgetCategory[]>([]);
 
 const rawCsv = ref('');
 const importStatus = ref<string | null>(null);
@@ -35,14 +54,39 @@ const canAddTransaction = computed(
     newAmount.value > 0,
 );
 
-const transactions = computed(() =>
-  [...domain.transactions].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+const totalPages = computed(() =>
+  Math.max(1, Math.ceil(totalCount.value / PAGE_SIZE)),
 );
+
+const pageLabel = computed(() => {
+  if (!totalCount.value) return '0 transactions';
+  const start = pageIndex.value * PAGE_SIZE + 1;
+  const end = Math.min(totalCount.value, (pageIndex.value + 1) * PAGE_SIZE);
+  return `${start}–${end} of ${totalCount.value}`;
+});
 
 const canImport = computed(
   () => !!domain.activeProfileId && !!domain.activeBudgetId && !!rawCsv.value.trim(),
 );
 const canExport = computed(() => !!domain.activeProfileId);
+
+const subcategoryOptions = computed(() => {
+  const byParent = new Map<number | null, BudgetSubcategory[]>();
+  for (const sub of subcategories.value) {
+    const key = sub.parentCategoryId;
+    const list = byParent.get(key) ?? [];
+    list.push(sub);
+    byParent.set(key, list);
+  }
+  const options: { id: number; label: string }[] = [];
+  for (const cat of categories.value) {
+    const kids = byParent.get(cat.id) ?? [];
+    for (const sub of kids) {
+      options.push({ id: sub.id, label: `${cat.label} · ${sub.label}` });
+    }
+  }
+  return options;
+});
 
 type ParsedRow = {
   date: string;
@@ -85,22 +129,92 @@ function parseSimpleCsv(text: string): ParsedRow[] {
   return rows;
 }
 
-async function ensureDataLoaded() {
+async function loadCategories() {
+  if (!domain.activeBudgetId) {
+    categories.value = [];
+    subcategories.value = [];
+    return;
+  }
+  const result = await window.fundlog.category.listByBudget(domain.activeBudgetId);
+  categories.value = result.categories;
+  subcategories.value = result.subcategories;
+}
+
+async function loadPage() {
+  if (!domain.activeProfileId) {
+    pageRows.value = [];
+    totalCount.value = 0;
+    return;
+  }
   loading.value = true;
   try {
-    if (!domain.activeProfileId) {
-      await domain.loadProfiles();
-    }
-    await domain.loadBudgets();
-    await domain.loadTransactions();
+    const result = await window.fundlog.transaction.listByBudgetPage({
+      profileId: domain.activeProfileId,
+      budgetId: domain.activeBudgetId ?? null,
+      limit: PAGE_SIZE,
+      offset: pageIndex.value * PAGE_SIZE,
+      q: filterQ.value.trim() || null,
+      dateFrom: filterDateFrom.value.trim() || null,
+      dateTo: filterDateTo.value.trim() || null,
+      subcategoryId: filterSubcategoryId.value,
+    });
+    pageRows.value = result.rows;
+    totalCount.value = result.total;
+  } catch (e) {
+    console.error(e);
+    toast.error('Failed to load transactions.');
   } finally {
     loading.value = false;
   }
 }
 
+function applyFilters() {
+  pageIndex.value = 0;
+  void loadPage();
+}
+
+function clearFilters() {
+  filterQ.value = '';
+  filterDateFrom.value = '';
+  filterDateTo.value = '';
+  filterSubcategoryId.value = null;
+  pageIndex.value = 0;
+  void loadPage();
+}
+
+function prevPage() {
+  if (pageIndex.value <= 0) return;
+  pageIndex.value -= 1;
+  void loadPage();
+}
+
+function nextPage() {
+  if (pageIndex.value + 1 >= totalPages.value) return;
+  pageIndex.value += 1;
+  void loadPage();
+}
+
+async function ensureDataLoaded() {
+  if (!domain.activeProfileId) {
+    await domain.loadProfiles();
+  }
+  await domain.loadBudgets();
+  await loadCategories();
+  await loadPage();
+}
+
 onMounted(() => {
   void ensureDataLoaded();
 });
+
+watch(
+  () => domain.activeBudgetId,
+  async () => {
+    pageIndex.value = 0;
+    await loadCategories();
+    await loadPage();
+  },
+);
 
 async function doImport() {
   importStatus.value = null;
@@ -116,7 +230,7 @@ async function doImport() {
       budgetId: domain.activeBudgetId,
       rows,
     });
-    await domain.loadTransactions();
+    await loadPage();
     importStatus.value = `Imported ${rows.length} row(s) into the current budget.`;
     rawCsv.value = '';
     hideBsModal('importCsvModal');
@@ -194,7 +308,9 @@ async function loadReceipts(tx: Transaction) {
 }
 
 function formatAmount(amount: number) {
-  const code = domain.profiles.find((p) => p.id === domain.activeProfileId)?.currencyCode ?? 'USD';
+  const code =
+    domain.profiles.find((p) => p.id === domain.activeProfileId)?.currencyCode ??
+    'USD';
   return formatMoneyExact(amount, code);
 }
 
@@ -206,7 +322,8 @@ function resetAddForm() {
 }
 
 async function addTransaction() {
-  if (!canAddTransaction.value || !domain.activeProfileId || !domain.activeBudgetId) return;
+  if (!canAddTransaction.value || !domain.activeProfileId || !domain.activeBudgetId)
+    return;
   addingTransaction.value = true;
   try {
     await window.fundlog.transaction.createSingle({
@@ -217,7 +334,7 @@ async function addTransaction() {
       merchant: newMerchant.value.trim() || null,
       description: newDescription.value.trim() || null,
     });
-    await domain.loadTransactions();
+    await loadPage();
     resetAddForm();
     hideBsModal('addTransactionModal');
     toast.success('Transaction added.');
@@ -256,7 +373,7 @@ function goTo(path: string) {
       Select a budget to add or view transactions.
     </p>
 
-    <div class="mb-4 d-flex flex-wrap gap-2 align-items-center">
+    <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
       <button
         type="button"
         class="btn btn-sm btn-primary"
@@ -291,13 +408,51 @@ function goTo(path: string) {
       </button>
     </div>
 
+    <div class="row g-2 align-items-end mb-3">
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Search</label>
+        <input
+          v-model="filterQ"
+          type="search"
+          class="form-control form-control-sm"
+          placeholder="Merchant or description"
+          @keyup.enter="applyFilters"
+        />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">From</label>
+        <input v-model="filterDateFrom" type="date" class="form-control form-control-sm" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">To</label>
+        <input v-model="filterDateTo" type="date" class="form-control form-control-sm" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Line item</label>
+        <select v-model="filterSubcategoryId" class="form-select form-select-sm">
+          <option :value="null">All</option>
+          <option v-for="opt in subcategoryOptions" :key="opt.id" :value="opt.id">
+            {{ opt.label }}
+          </option>
+        </select>
+      </div>
+      <div class="col-md-2 d-flex flex-wrap gap-1">
+        <button type="button" class="btn btn-sm btn-primary" @click="applyFilters">
+          Apply
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" @click="clearFilters">
+          Clear
+        </button>
+      </div>
+    </div>
+
     <h3 class="h5 mb-3">Activity</h3>
     <LoadingView v-if="loading" class="mb-3" message="Loading transactions…" />
-    <p v-else-if="!domain.transactions.length" class="status-text">
-      No transactions yet. Use Add transaction… or Import CSV… above.
+    <p v-else-if="!totalCount" class="status-text">
+      No transactions match. Use Add transaction… or Import CSV… above, or clear filters.
     </p>
 
-    <div v-if="transactions.length" class="transactions-table-wrapper mt-2">
+    <div v-if="pageRows.length" class="transactions-table-wrapper mt-2">
       <table class="transactions-table table table-dark table-striped table-sm align-middle">
         <thead>
           <tr>
@@ -310,7 +465,7 @@ function goTo(path: string) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="tx in transactions" :key="tx.id">
+          <tr v-for="tx in pageRows" :key="tx.id">
             <td>{{ tx.date }}</td>
             <td>{{ tx.merchant || '—' }}</td>
             <td>{{ tx.description || '—' }}</td>
@@ -335,7 +490,10 @@ function goTo(path: string) {
                   View
                 </button>
               </div>
-              <div v-if="receiptMap[tx.id]?.length" class="receipts-preview d-flex flex-wrap gap-1">
+              <div
+                v-if="receiptMap[tx.id]?.length"
+                class="receipts-preview d-flex flex-wrap gap-1"
+              >
                 <div
                   v-for="r in receiptMap[tx.id]"
                   :key="r.id"
@@ -364,6 +522,27 @@ function goTo(path: string) {
           </tr>
         </tbody>
       </table>
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
+        <span class="small text-muted">{{ pageLabel }}</span>
+        <div class="btn-group btn-group-sm">
+          <button
+            type="button"
+            class="btn btn-outline-secondary"
+            :disabled="pageIndex <= 0 || loading"
+            @click="prevPage"
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            class="btn btn-outline-secondary"
+            :disabled="pageIndex + 1 >= totalPages || loading"
+            @click="nextPage"
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </div>
 
     <p v-if="statusMessage" class="status-text mt-2">
@@ -430,14 +609,19 @@ function goTo(path: string) {
             </div>
             <div class="col-12">
               <p class="small text-muted mb-0">
-                Saved to the active budget. For purchases or unexpected expenses tied to your plan,
-                use <a href="#" @click.prevent="goTo('/expenses')">Expenses</a>.
+                Saved to the active budget. For purchases or unexpected expenses tied to your
+                plan, use
+                <a href="#" @click.prevent="goTo('/expenses')">Expenses</a>.
               </p>
             </div>
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-            <button type="submit" class="btn btn-primary" :disabled="!canAddTransaction || addingTransaction">
+            <button
+              type="submit"
+              class="btn btn-primary"
+              :disabled="!canAddTransaction || addingTransaction"
+            >
               {{ addingTransaction ? 'Saving…' : 'Add transaction' }}
             </button>
           </div>

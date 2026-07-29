@@ -47,6 +47,7 @@ const purchaseLabel = ref('');
 const purchaseMerchant = ref('');
 const barMetric = ref<'amount' | 'count'>('amount');
 const vendorScope = ref<'month' | 'lifetime'>('month');
+const activitySearch = ref('');
 
 const activeBudget = computed(() => domain.activeBudget);
 
@@ -120,14 +121,17 @@ async function loadData() {
       window.fundlog.transaction.listUnexpected(
         domain.activeProfileId,
         activeBudget.value.id,
+        viewingMonth,
       ),
       window.fundlog.transaction.listPurchases(
         domain.activeProfileId,
         activeBudget.value.id,
+        viewingMonth,
       ),
       window.fundlog.transaction.listGoalContributions(
         domain.activeProfileId,
         activeBudget.value.id,
+        viewingMonth,
       ),
     ]);
     unexpected.value = tx;
@@ -193,7 +197,17 @@ const purchaseSpreadPreview = computed(() => {
   return monthlyPortion(purchaseAmount.value, purchaseSpreadMonths.value);
 });
 
-const recentPurchases = computed(() => purchases.value.slice(0, 10));
+function matchesActivitySearch(tx: Transaction): boolean {
+  const q = activitySearch.value.trim().toLowerCase();
+  if (!q) return true;
+  const merchant = (tx.merchant ?? '').toLowerCase();
+  const description = (tx.description ?? '').toLowerCase();
+  return merchant.includes(q) || description.includes(q);
+}
+
+const recentPurchases = computed(() =>
+  purchases.value.filter(matchesActivitySearch).slice(0, 10),
+);
 
 const unexpectedThisMonth = computed(() =>
   unexpected.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth) > 0),
@@ -259,7 +273,9 @@ const unexpectedBarSegments = computed(() => {
   return rows;
 });
 
-const recentUnexpected = computed(() => unexpectedThisMonth.value.slice(0, 10));
+const recentUnexpected = computed(() =>
+  unexpectedThisMonth.value.filter(matchesActivitySearch).slice(0, 10),
+);
 
 const baseBudgetIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
 
@@ -732,6 +748,20 @@ async function addPurchase() {
               </li>
             </ul>
           </CollapsibleSection>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label visually-hidden" for="expensesActivitySearch">
+            Search activity
+          </label>
+          <input
+            id="expensesActivitySearch"
+            v-model="activitySearch"
+            type="search"
+            class="form-control form-control-sm"
+            placeholder="Search purchases and unexpected by merchant or description"
+            autocomplete="off"
+          />
         </div>
 
         <div class="col-12 col-lg-6">
