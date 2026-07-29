@@ -1482,17 +1482,20 @@ html {
 /* Credit cards: perk rows and panels read clearly on themed background */
 /* Cards + Budget Records: explicit foreground so text never washes out */
 .credit-cards-view,
-.budget-records-view {
+.budget-records-view,
+.portfolio-snapshot-view {
   color: var(--text);
 }
 
 .credit-cards-view h2,
-.budget-records-view h2 {
+.budget-records-view h2,
+.portfolio-snapshot-view h2 {
   color: var(--text-h);
 }
 
 .credit-cards-view .view-subtitle,
-.budget-records-view .view-subtitle {
+.budget-records-view .view-subtitle,
+.portfolio-snapshot-view .view-subtitle {
   color: var(--muted);
 }
 
@@ -1501,8 +1504,43 @@ html {
 }
 
 .credit-cards-view .status-text,
-.budget-records-view .status-text {
+.budget-records-view .status-text,
+.portfolio-snapshot-view .status-text {
   color: var(--status-text);
+}
+
+.portfolio-snapshot-view .portfolio-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.portfolio-snapshot-view .portfolio-account-title {
+  color: var(--text-h);
+}
+
+.portfolio-snapshot-view .portfolio-empty-hint {
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1rem;
+}
+
+.portfolio-snapshot-view .portfolio-empty-title {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+  color: var(--text-h);
+}
+
+.portfolio-snapshot-view .portfolio-empty-muted {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.portfolio-snapshot-view .portfolio-total,
+.portfolio-snapshot-view .portfolio-account-card {
+  background: var(--card-bg);
 }
 
 /* Cards page — compact layout with clear hierarchy */

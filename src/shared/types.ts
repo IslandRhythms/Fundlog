@@ -150,6 +150,28 @@ export interface CreditCard {
   perks: CreditCardPerk[];
 }
 
+/** One logged value for a portfolio account on a calendar day. */
+export interface PortfolioSnapshot {
+  id: number;
+  accountId: number;
+  date: string; // YYYY-MM-DD
+  value: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Named account whose value is tracked over time via daily snapshots. */
+export interface PortfolioAccount {
+  id: number;
+  profileId: number;
+  name: string;
+  note: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  snapshots: PortfolioSnapshot[];
+}
+
 /** Optional overrides for CSS variables (hex or any valid CSS color). */
 export type CustomThemeColors = Partial<{
   bg: string;

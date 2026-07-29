@@ -229,27 +229,6 @@ async function addTransaction() {
   }
 }
 
-async function runOcr(tx: Transaction, receipt: Receipt) {
-  statusMessage.value = null;
-  try {
-    const updated = await window.fundlog.receipt.runFakeOcr({
-      receiptId: receipt.id,
-      transactionAmount: tx.amount ?? null,
-      transactionDate: tx.date ?? null,
-      transactionMerchant: tx.merchant ?? null,
-    });
-    const existing = receiptMap.value[tx.id] ?? [];
-    receiptMap.value = {
-      ...receiptMap.value,
-      [tx.id]: existing.map((r) => (r.id === updated.id ? updated : r)),
-    };
-    statusMessage.value = 'OCR analysis updated from transaction data.';
-  } catch (err) {
-    console.error(err);
-    statusMessage.value = 'Failed to run OCR.';
-  }
-}
-
 function isMismatched(receipt: Receipt) {
   if (
     receipt.expectedAmount != null &&
@@ -379,13 +358,6 @@ function goTo(path: string) {
                       · ocr {{ formatAmount(r.extractedAmount) }}
                     </span>
                   </span>
-                  <button
-                    type="button"
-                    class="btn btn-xs btn-outline-light ms-1"
-                    @click="runOcr(tx, r)"
-                  >
-                    Run OCR
-                  </button>
                 </div>
               </div>
             </td>

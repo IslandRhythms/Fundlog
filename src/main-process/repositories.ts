@@ -12,6 +12,8 @@ import {
   type Receipt,
   type CreditCard,
   type CreditCardPerk,
+  type PortfolioAccount,
+  type PortfolioSnapshot,
 } from '../shared/types.js';
 import { errorMessageFromUnknown } from '../shared/errors.js';
 
@@ -896,7 +898,7 @@ export const ReceiptRepository = {
       transactionId: input.transactionId,
       filePath: input.filePath,
       uploadedAt,
-      ocrStatus: 'pending',
+      ocrStatus: 'skipped',
       expectedAmount: input.expectedAmount ?? null,
       merchant: input.merchant ?? null,
     });
@@ -1218,6 +1220,277 @@ export const CreditCardRepository = {
         .get(cardId) as { profileId: number }
     ).profileId;
     return this.listByProfile(pid).find((c) => c.id === cardId)!;
+  },
+};
+
+function assertIsoDate(date: string): string {
+  const trimmed = date.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new Error('Date must be YYYY-MM-DD.');
+  }
+  return trimmed;
+}
+
+function assertFiniteValue(value: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error('Value must be a finite number.');
+  }
+  return value;
+}
+
+function mapPortfolioSnapshot(row: Record<string, unknown>): PortfolioSnapshot {
+  return {
+    id: row.id as number,
+    accountId: row.accountId as number,
+    date: row.date as string,
+    value: row.value as number,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+  };
+}
+
+function mapPortfolioAccount(
+  row: Record<string, unknown>,
+  snapshots: PortfolioSnapshot[],
+): PortfolioAccount {
+  return {
+    id: row.id as number,
+    profileId: row.profileId as number,
+    name: row.name as string,
+    note: (row.note as string | null) ?? null,
+    sortOrder: row.sortOrder as number,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+    snapshots,
+  };
+}
+
+function requireAccountForProfile(
+  accountId: number,
+  profileId: number,
+): { id: number; profileId: number } {
+  const row = db()
+    .prepare(
+      `SELECT id, profile_id AS profileId FROM portfolio_accounts
+       WHERE id = ? AND profile_id = ?`,
+    )
+    .get(accountId, profileId) as { id: number; profileId: number } | undefined;
+  if (!row) throw new Error('Portfolio account not found.');
+  return row;
+}
+
+export const PortfolioAccountRepository = {
+  listByProfile(profileId: number): PortfolioAccount[] {
+    const rows = db()
+      .prepare(
+        `SELECT id, profile_id AS profileId, name, note,
+                sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+         FROM portfolio_accounts
+         WHERE profile_id = ?
+         ORDER BY sort_order ASC, name ASC, id ASC`,
+      )
+      .all(profileId) as Record<string, unknown>[];
+    return rows.map((row) => {
+      const id = row.id as number;
+      const snapRows = db()
+        .prepare(
+          `SELECT id, account_id AS accountId, date, value,
+                  created_at AS createdAt, updated_at AS updatedAt
+           FROM portfolio_snapshots
+           WHERE account_id = ?
+           ORDER BY date ASC, id ASC`,
+        )
+        .all(id) as Record<string, unknown>[];
+      return mapPortfolioAccount(row, snapRows.map(mapPortfolioSnapshot));
+    });
+  },
+
+  create(input: {
+    profileId: number;
+    name: string;
+    note?: string | null;
+    sortOrder?: number;
+  }): PortfolioAccount {
+    const name = input.name.trim();
+    if (!name) throw new Error('Account name is required.');
+    const createdAt = now();
+    const maxSort =
+      (
+        db()
+          .prepare(
+            'SELECT COALESCE(MAX(sort_order), -1) AS m FROM portfolio_accounts WHERE profile_id = ?',
+          )
+          .get(input.profileId) as { m: number }
+      ).m + 1;
+    const result = db()
+      .prepare(
+        `INSERT INTO portfolio_accounts
+         (profile_id, name, note, sort_order, created_at, updated_at)
+         VALUES (@profileId, @name, @note, @sortOrder, @createdAt, @createdAt)`,
+      )
+      .run({
+        profileId: input.profileId,
+        name,
+        note: input.note?.trim() || null,
+        sortOrder: input.sortOrder ?? maxSort,
+        createdAt,
+      });
+    const id = Number(result.lastInsertRowid);
+    return this.listByProfile(input.profileId).find((a) => a.id === id)!;
+  },
+
+  update(input: {
+    id: number;
+    profileId: number;
+    name: string;
+    note?: string | null;
+    sortOrder?: number;
+  }): PortfolioAccount {
+    requireAccountForProfile(input.id, input.profileId);
+    const name = input.name.trim();
+    if (!name) throw new Error('Account name is required.');
+    const updatedAt = now();
+    if (input.sortOrder != null) {
+      db()
+        .prepare(
+          `UPDATE portfolio_accounts
+           SET name = @name, note = @note, sort_order = @sortOrder, updated_at = @updatedAt
+           WHERE id = @id AND profile_id = @profileId`,
+        )
+        .run({
+          id: input.id,
+          profileId: input.profileId,
+          name,
+          note: input.note?.trim() || null,
+          sortOrder: input.sortOrder,
+          updatedAt,
+        });
+    } else {
+      db()
+        .prepare(
+          `UPDATE portfolio_accounts
+           SET name = @name, note = @note, updated_at = @updatedAt
+           WHERE id = @id AND profile_id = @profileId`,
+        )
+        .run({
+          id: input.id,
+          profileId: input.profileId,
+          name,
+          note: input.note?.trim() || null,
+          updatedAt,
+        });
+    }
+    return this.listByProfile(input.profileId).find((a) => a.id === input.id)!;
+  },
+
+  delete(input: { id: number; profileId: number }): void {
+    requireAccountForProfile(input.id, input.profileId);
+    db()
+      .prepare('DELETE FROM portfolio_accounts WHERE id = ? AND profile_id = ?')
+      .run(input.id, input.profileId);
+  },
+
+  upsertSnapshot(input: {
+    accountId: number;
+    profileId: number;
+    date: string;
+    value: number;
+  }): PortfolioAccount {
+    requireAccountForProfile(input.accountId, input.profileId);
+    const date = assertIsoDate(input.date);
+    const value = assertFiniteValue(input.value);
+    const stamp = now();
+    db()
+      .prepare(
+        `INSERT INTO portfolio_snapshots (account_id, date, value, created_at, updated_at)
+         VALUES (@accountId, @date, @value, @stamp, @stamp)
+         ON CONFLICT(account_id, date) DO UPDATE SET
+           value = excluded.value,
+           updated_at = excluded.updated_at`,
+      )
+      .run({
+        accountId: input.accountId,
+        date,
+        value,
+        stamp,
+      });
+    db()
+      .prepare(
+        'UPDATE portfolio_accounts SET updated_at = ? WHERE id = ?',
+      )
+      .run(stamp, input.accountId);
+    return this.listByProfile(input.profileId).find(
+      (a) => a.id === input.accountId,
+    )!;
+  },
+
+  updateSnapshot(input: {
+    id: number;
+    profileId: number;
+    date: string;
+    value: number;
+  }): PortfolioAccount {
+    const existing = db()
+      .prepare(
+        `SELECT s.id, s.account_id AS accountId, a.profile_id AS profileId
+         FROM portfolio_snapshots s
+         JOIN portfolio_accounts a ON a.id = s.account_id
+         WHERE s.id = ?`,
+      )
+      .get(input.id) as
+      | { id: number; accountId: number; profileId: number }
+      | undefined;
+    if (!existing || existing.profileId !== input.profileId) {
+      throw new Error('Snapshot not found.');
+    }
+    const date = assertIsoDate(input.date);
+    const value = assertFiniteValue(input.value);
+    const updatedAt = now();
+    try {
+      db()
+        .prepare(
+          `UPDATE portfolio_snapshots
+           SET date = @date, value = @value, updated_at = @updatedAt
+           WHERE id = @id`,
+        )
+        .run({ id: input.id, date, value, updatedAt });
+    } catch (err) {
+      const msg = errorMessageFromUnknown(err, '');
+      if (/UNIQUE/i.test(msg)) {
+        throw new Error('A value already exists for that date on this account.');
+      }
+      throw err;
+    }
+    db()
+      .prepare(
+        'UPDATE portfolio_accounts SET updated_at = ? WHERE id = ?',
+      )
+      .run(updatedAt, existing.accountId);
+    return this.listByProfile(input.profileId).find(
+      (a) => a.id === existing.accountId,
+    )!;
+  },
+
+  deleteSnapshot(input: { id: number; profileId: number }): void {
+    const existing = db()
+      .prepare(
+        `SELECT s.id, s.account_id AS accountId, a.profile_id AS profileId
+         FROM portfolio_snapshots s
+         JOIN portfolio_accounts a ON a.id = s.account_id
+         WHERE s.id = ?`,
+      )
+      .get(input.id) as
+      | { id: number; accountId: number; profileId: number }
+      | undefined;
+    if (!existing || existing.profileId !== input.profileId) {
+      throw new Error('Snapshot not found.');
+    }
+    db().prepare('DELETE FROM portfolio_snapshots WHERE id = ?').run(input.id);
+    db()
+      .prepare(
+        'UPDATE portfolio_accounts SET updated_at = ? WHERE id = ?',
+      )
+      .run(now(), existing.accountId);
   },
 };
 

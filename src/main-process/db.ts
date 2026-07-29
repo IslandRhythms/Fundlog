@@ -4,7 +4,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 9;
 
 let db: Database.Database | null = null;
 
@@ -76,6 +76,7 @@ export function getDb() {
   if (!db) {
     db = new Database(getDbPath());
     db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
     runMigrations();
   }
   return db;
@@ -337,6 +338,78 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
       )
       .run(7, now);
+  }
+
+  if (current < 8 && SCHEMA_VERSION >= 8) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      CREATE TABLE portfolio_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        note TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE portfolio_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        value REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (account_id, date),
+        FOREIGN KEY (account_id) REFERENCES portfolio_accounts(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX idx_portfolio_snapshots_account_date
+        ON portfolio_snapshots(account_id, date);
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(8, now);
+  }
+
+  if (current < 9 && SCHEMA_VERSION >= 9) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      CREATE INDEX IF NOT EXISTS idx_transactions_profile_budget
+        ON transactions(profile_id, budget_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_profile_date
+        ON transactions(profile_id, date);
+      CREATE INDEX IF NOT EXISTS idx_transactions_budget_date
+        ON transactions(budget_id, date);
+      CREATE INDEX IF NOT EXISTS idx_transactions_goal_id
+        ON transactions(goal_id);
+      CREATE INDEX IF NOT EXISTS idx_budgets_profile
+        ON budgets(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_goals_profile
+        ON goals(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_credit_cards_profile
+        ON credit_cards(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_portfolio_accounts_profile
+        ON portfolio_accounts(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_receipts_transaction
+        ON receipts(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_budget_categories_budget
+        ON budget_categories(budget_id);
+      CREATE INDEX IF NOT EXISTS idx_budget_subcategories_budget
+        ON budget_subcategories(budget_id);
+      CREATE INDEX IF NOT EXISTS idx_credit_card_perks_card
+        ON credit_card_perks(card_id);
+      CREATE INDEX IF NOT EXISTS idx_goal_allocations_goal
+        ON goal_allocations(goal_id);
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(9, now);
   }
 }
 

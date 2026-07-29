@@ -204,6 +204,41 @@ interface Window {
         perkId: number | null;
       }): Promise<import('./shared/types').CreditCard>;
     };
+    portfolio: {
+      listByProfile(
+        profileId: number,
+      ): Promise<import('./shared/types').PortfolioAccount[]>;
+      create(input: {
+        profileId: number;
+        name: string;
+        note?: string | null;
+        sortOrder?: number;
+      }): Promise<import('./shared/types').PortfolioAccount>;
+      update(input: {
+        id: number;
+        profileId: number;
+        name: string;
+        note?: string | null;
+        sortOrder?: number;
+      }): Promise<import('./shared/types').PortfolioAccount>;
+      delete(input: { id: number; profileId: number }): Promise<void>;
+      snapshotUpsert(input: {
+        accountId: number;
+        profileId: number;
+        date: string;
+        value: number;
+      }): Promise<import('./shared/types').PortfolioAccount>;
+      snapshotUpdate(input: {
+        id: number;
+        profileId: number;
+        date: string;
+        value: number;
+      }): Promise<import('./shared/types').PortfolioAccount>;
+      snapshotDelete(input: {
+        id: number;
+        profileId: number;
+      }): Promise<void>;
+    };
     goal: {
       listByProfile(profileId: number): Promise<import('./shared/types').Goal[]>;
       create(input: {
@@ -261,12 +296,6 @@ interface Window {
         expectedAmount?: number | null;
         merchant?: string | null;
       }): Promise<import('./shared/types').Receipt | null>;
-      runFakeOcr(input: {
-        receiptId: number;
-        transactionAmount: number | null;
-        transactionDate: string | null;
-        transactionMerchant: string | null;
-      }): Promise<import('./shared/types').Receipt>;
     };
   };
 }

@@ -24,6 +24,7 @@ import {
   CategoryRepository,
   ReceiptRepository,
   CreditCardRepository,
+  PortfolioAccountRepository,
 } from './main-process/repositories';
 import type { AppPrefs, Transaction, Receipt } from './shared/types';
 
@@ -58,6 +59,7 @@ const createMainWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -128,6 +130,24 @@ ipcMain.handle('database:getLocation', () => {
   return getDatabaseLocationInfo();
 });
 
+/** Paths chosen via native dialogs; setLocation only accepts these (or null reset). */
+const dialogPickedDbPaths = new Set<string>();
+
+function normalizeDbPathKey(filePath: string): string {
+  const normalized = path.normalize(filePath.trim());
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function rememberDialogDbPath(filePath: string): string {
+  const normalized = path.normalize(filePath.trim());
+  dialogPickedDbPaths.add(normalizeDbPathKey(normalized));
+  return normalized;
+}
+
+function isDialogPickedDbPath(filePath: string): boolean {
+  return dialogPickedDbPaths.has(normalizeDbPathKey(filePath));
+}
+
 ipcMain.handle('database:pickPathSave', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const defaultPath = path.join(app.getPath('documents'), 'fundlog.db');
@@ -137,7 +157,7 @@ ipcMain.handle('database:pickPathSave', async (event) => {
     filters: [{ name: 'SQLite database', extensions: ['db'] }],
   });
   if (r.canceled || !r.filePath) return null;
-  return r.filePath;
+  return rememberDialogDbPath(r.filePath);
 });
 
 ipcMain.handle('database:pickPathOpen', async (event) => {
@@ -148,7 +168,7 @@ ipcMain.handle('database:pickPathOpen', async (event) => {
     properties: ['openFile'],
   });
   if (r.canceled || !r.filePaths.length) return null;
-  return r.filePaths[0];
+  return rememberDialogDbPath(r.filePaths[0]!);
 });
 
 ipcMain.handle(
@@ -171,9 +191,21 @@ ipcMain.handle(
         delete next.databasePath;
         writeAppPrefs(next);
       } else {
+        const trimmed = args.filePath.trim();
+        const currentCustom = previous.databasePath?.trim() ?? '';
+        const matchesCurrent =
+          currentCustom !== '' &&
+          normalizeDbPathKey(trimmed) === normalizeDbPathKey(currentCustom);
+        if (!isDialogPickedDbPath(trimmed) && !matchesCurrent) {
+          return {
+            ok: false,
+            error:
+              'Choose a path with “Choose location…” or “Open existing file…” before applying.',
+          };
+        }
         writeAppPrefs({
           ...previous,
-          databasePath: path.normalize(args.filePath.trim()),
+          databasePath: path.normalize(trimmed),
         });
       }
       reloadDatabase();
@@ -523,6 +555,88 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'portfolio:listByProfile',
+  (_event, args: { profileId: number }) => {
+    return PortfolioAccountRepository.listByProfile(args.profileId);
+  },
+);
+
+ipcMain.handle(
+  'portfolio:create',
+  (
+    _event,
+    args: {
+      profileId: number;
+      name: string;
+      note?: string | null;
+      sortOrder?: number;
+    },
+  ) => {
+    return PortfolioAccountRepository.create(args);
+  },
+);
+
+ipcMain.handle(
+  'portfolio:update',
+  (
+    _event,
+    args: {
+      id: number;
+      profileId: number;
+      name: string;
+      note?: string | null;
+      sortOrder?: number;
+    },
+  ) => {
+    return PortfolioAccountRepository.update(args);
+  },
+);
+
+ipcMain.handle(
+  'portfolio:delete',
+  (_event, args: { id: number; profileId: number }) => {
+    PortfolioAccountRepository.delete(args);
+  },
+);
+
+ipcMain.handle(
+  'portfolio:snapshot:upsert',
+  (
+    _event,
+    args: {
+      accountId: number;
+      profileId: number;
+      date: string;
+      value: number;
+    },
+  ) => {
+    return PortfolioAccountRepository.upsertSnapshot(args);
+  },
+);
+
+ipcMain.handle(
+  'portfolio:snapshot:update',
+  (
+    _event,
+    args: {
+      id: number;
+      profileId: number;
+      date: string;
+      value: number;
+    },
+  ) => {
+    return PortfolioAccountRepository.updateSnapshot(args);
+  },
+);
+
+ipcMain.handle(
+  'portfolio:snapshot:delete',
+  (_event, args: { id: number; profileId: number }) => {
+    PortfolioAccountRepository.deleteSnapshot(args);
+  },
+);
+
+ipcMain.handle(
   'csv:importTransactions',
   (
     _event,
@@ -639,34 +753,6 @@ ipcMain.handle(
     });
 
     return receipt;
-  },
-);
-
-ipcMain.handle(
-  'receipt:runFakeOcr',
-  (
-    _event,
-    args: {
-      receiptId: number;
-      transactionAmount: number | null;
-      transactionDate: string | null;
-      transactionMerchant: string | null;
-    },
-  ): Receipt => {
-    const extractedAmount = args.transactionAmount ?? null;
-    const extractedDate = args.transactionDate ?? null;
-    const merchant = args.transactionMerchant ?? null;
-    const rawOcrText =
-      'Stub OCR result: using transaction data as extracted fields.';
-
-    return ReceiptRepository.updateOcrResult({
-      id: args.receiptId,
-      ocrStatus: 'success',
-      extractedAmount,
-      extractedDate,
-      merchant,
-      rawOcrText,
-    });
   },
 );
 

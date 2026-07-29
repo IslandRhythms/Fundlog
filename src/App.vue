@@ -10,7 +10,7 @@ const router = useRouter();
 type NavItem = { path: string; label: string };
 type NavSection = { heading: string; items: NavItem[] };
 
-/** Task flow: overview → day-to-day → budget work → longer-term planning → cards; settings last. */
+/** Task flow: overview → day-to-day → budget work → longer-term planning → finances; settings last. */
 const navSections: NavSection[] = [
   { heading: 'Overview', items: [{ path: '/dashboard', label: 'Dashboard' }] },
   { heading: 'Activity', items: [{ path: '/transactions', label: 'Transactions' }] },
@@ -30,7 +30,13 @@ const navSections: NavSection[] = [
       { path: '/extra-income', label: 'Extra income' },
     ],
   },
-  { heading: 'Credit', items: [{ path: '/cards', label: 'Cards' }] },
+  {
+    heading: 'Finances',
+    items: [
+      { path: '/portfolio-snapshot', label: 'Portfolio Snapshot' },
+      { path: '/cards', label: 'Cards' },
+    ],
+  },
 ];
 
 const settingsNav: NavItem = { path: '/settings', label: 'Settings' };

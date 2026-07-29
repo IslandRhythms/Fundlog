@@ -10,6 +10,7 @@ import type {
   BudgetCategory,
   BudgetSubcategory,
   CreditCard,
+  PortfolioAccount,
   AppPrefs,
 } from './shared/types';
 
@@ -226,6 +227,45 @@ export const api = {
       perkId: number | null;
     }): Promise<CreditCard> => ipcRenderer.invoke('card:setActivePerk', args),
   },
+  portfolio: {
+    listByProfile: async (profileId: number): Promise<PortfolioAccount[]> =>
+      ipcRenderer.invoke('portfolio:listByProfile', { profileId }),
+    create: async (input: {
+      profileId: number;
+      name: string;
+      note?: string | null;
+      sortOrder?: number;
+    }): Promise<PortfolioAccount> =>
+      ipcRenderer.invoke('portfolio:create', input),
+    update: async (input: {
+      id: number;
+      profileId: number;
+      name: string;
+      note?: string | null;
+      sortOrder?: number;
+    }): Promise<PortfolioAccount> =>
+      ipcRenderer.invoke('portfolio:update', input),
+    delete: async (input: { id: number; profileId: number }): Promise<void> =>
+      ipcRenderer.invoke('portfolio:delete', input),
+    snapshotUpsert: async (input: {
+      accountId: number;
+      profileId: number;
+      date: string;
+      value: number;
+    }): Promise<PortfolioAccount> =>
+      ipcRenderer.invoke('portfolio:snapshot:upsert', input),
+    snapshotUpdate: async (input: {
+      id: number;
+      profileId: number;
+      date: string;
+      value: number;
+    }): Promise<PortfolioAccount> =>
+      ipcRenderer.invoke('portfolio:snapshot:update', input),
+    snapshotDelete: async (input: {
+      id: number;
+      profileId: number;
+    }): Promise<void> => ipcRenderer.invoke('portfolio:snapshot:delete', input),
+  },
   goal: {
     listByProfile: async (profileId: number): Promise<Goal[]> =>
       ipcRenderer.invoke('goal:listByProfile', { profileId }),
@@ -288,12 +328,6 @@ export const api = {
       merchant?: string | null;
     }): Promise<Receipt | null> =>
       ipcRenderer.invoke('receipt:attachViaDialog', input),
-    runFakeOcr: async (input: {
-      receiptId: number;
-      transactionAmount: number | null;
-      transactionDate: string | null;
-      transactionMerchant: string | null;
-    }): Promise<Receipt> => ipcRenderer.invoke('receipt:runFakeOcr', input),
   },
 };
 

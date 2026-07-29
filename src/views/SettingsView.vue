@@ -331,10 +331,15 @@ async function submitProfile() {
                   v-model="dbPathInput"
                   type="text"
                   class="form-control font-monospace small mb-2"
-                  placeholder="Default: app data folder"
+                  placeholder="Use Choose location… or Open existing file…"
                   autocomplete="off"
                   spellcheck="false"
+                  readonly
                 />
+                <p class="small text-muted mb-2">
+                  Pick a file with the buttons below, then apply. Paths cannot be typed in
+                  directly.
+                </p>
                 <p class="small text-muted mb-2">
                   Currently open file:
                   <span class="text-break user-select-all">{{ dbLocation.resolvedPath }}</span>
