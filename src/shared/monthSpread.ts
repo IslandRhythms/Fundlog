@@ -15,7 +15,12 @@ export function calendarMonthFromDate(isoDate: string): string {
   return isoDate.slice(0, 7);
 }
 
-/** True when `viewingMonth` falls in [startMonth, startMonth + spreadMonths). */
+function monthIndex(ym: string): number {
+  const { year, month } = parseCalendarMonth(ym);
+  return year * 12 + (month - 1);
+}
+
+/** True when `viewingMonth` falls in the one-time window [startMonth, startMonth + spreadMonths). */
 export function isMonthInSpreadRange(
   startMonth: string,
   spreadMonths: number,
@@ -29,9 +34,19 @@ export function isMonthInSpreadRange(
   return viewIdx >= startIdx && viewIdx < startIdx + spread;
 }
 
-function monthIndex(ym: string): number {
-  const { year, month } = parseCalendarMonth(ym);
-  return year * 12 + (month - 1);
+/**
+ * Planned budget lines with a multi-month spread renew: after `startMonth`, every
+ * following month gets the monthly portion (cycles of `spreadMonths`).
+ */
+export function isMonthInRecurringSpread(
+  startMonth: string,
+  spreadMonths: number,
+  viewingMonth: string,
+): boolean {
+  if (!isValidCalendarMonth(startMonth) || !isValidCalendarMonth(viewingMonth)) return false;
+  const spread = Math.max(1, Math.floor(spreadMonths));
+  if (spread <= 1) return startMonth === viewingMonth;
+  return monthIndex(viewingMonth) >= monthIndex(startMonth);
 }
 
 export function monthlyPortion(total: number, spreadMonths: number): number {

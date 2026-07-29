@@ -2,6 +2,7 @@ import type { BudgetCategory, BudgetSubcategory, Transaction } from './types';
 import { FUND_COLORS } from './fundColors';
 import {
   calendarMonthFromDate,
+  isMonthInRecurringSpread,
   isMonthInSpreadRange,
   monthlyPortion,
 } from './monthSpread';
@@ -13,8 +14,9 @@ export function plannedAmountFromSub(
   const spread = Math.max(1, sub.spreadMonths ?? 1);
   const startMonth = sub.spreadStartMonth ?? null;
 
+  // Multi-month planned lines renew after start (insurance, dues, etc.).
   if (viewingMonth && spread > 1 && startMonth) {
-    if (!isMonthInSpreadRange(startMonth, spread, viewingMonth)) return 0;
+    if (!isMonthInRecurringSpread(startMonth, spread, viewingMonth)) return 0;
   }
 
   let base = 0;

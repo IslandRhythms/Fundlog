@@ -53,9 +53,9 @@ export interface BudgetSubcategory {
   minAmount?: number | null;
   maxAmount?: number | null;
   isFlexible: number;
-  /** Total cost spread evenly across this many months (default 1). */
+  /** Cycle length in months; total is split evenly and renews after start (default 1). */
   spreadMonths: number;
-  /** First calendar month the spread applies (YYYY-MM); used when spreadMonths > 1. */
+  /** First calendar month the recurring spread applies (YYYY-MM); used when spreadMonths > 1. */
   spreadStartMonth: string | null;
   sortOrder: number;
 }

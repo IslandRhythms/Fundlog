@@ -387,9 +387,9 @@ function subSpreadHint(sub: BudgetSubcategory): string | null {
   const total = plannedTotalFromSub(sub);
   const monthly = plannedAmountFromSub(sub, viewingMonth);
   if (monthly <= 0) {
-    return `${formatMoney(total)} over ${spreadMonthsLabel(spread)} (not active this month)`;
+    return `${formatMoney(total)} every ${spreadMonthsLabel(spread)} (starts later)`;
   }
-  return `${formatMoney(total)} over ${spreadMonthsLabel(spread)} → ${formatMoney(monthly)}/mo`;
+  return `${formatMoney(total)} every ${spreadMonthsLabel(spread)} → ${formatMoney(monthly)}/mo`;
 }
 
 function lineItemPlannedPrimary(sub: BudgetSubcategory): string {
@@ -640,7 +640,7 @@ async function submitSubcategory(category: BudgetCategory) {
                                     v-if="(sub.spreadMonths ?? 1) > 1"
                                     class="expense-spread-badge"
                                   >
-                                    {{ sub.spreadMonths }} mo spread
+                                    every {{ sub.spreadMonths }} mo
                                   </span>
                                 </span>
                               </div>
@@ -823,7 +823,7 @@ async function submitSubcategory(category: BudgetCategory) {
                       </div>
                       <div v-if="newType === 'fixed'">
                         <label class="form-label">
-                          Spread (mo)
+                          Every (mo)
                           <input
                             v-model.number="newSpreadMonths"
                             type="number"
@@ -842,6 +842,10 @@ async function submitSubcategory(category: BudgetCategory) {
                             class="form-control form-control-sm"
                           />
                         </label>
+                        <p class="form-text small mb-0">
+                          Total is split across each {{ newSpreadMonths }}-month
+                          cycle and renews.
+                        </p>
                       </div>
                       <div v-if="newType === 'variable'">
                         <label class="form-label">
@@ -947,7 +951,7 @@ async function submitSubcategory(category: BudgetCategory) {
                   </div>
                   <div v-if="newType === 'fixed'">
                     <label class="form-label">
-                      Spread (mo)
+                      Every (mo)
                       <input
                         v-model.number="newSpreadMonths"
                         type="number"
@@ -968,6 +972,10 @@ async function submitSubcategory(category: BudgetCategory) {
                         class="form-control form-control-sm"
                       />
                     </label>
+                    <p class="form-text small mb-0">
+                      Total is split across each {{ newSpreadMonths }}-month
+                      cycle and renews.
+                    </p>
                   </div>
                   <div
                     v-if="newType === 'fixed' && previewMonthlyFromForm() != null && newSpreadMonths > 1"
