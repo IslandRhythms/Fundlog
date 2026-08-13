@@ -17,7 +17,7 @@ import {
 import { computeCategoryImpact } from '../shared/categoryImpact';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
-import { calendarMonthNow } from '../shared/calendarMonth';
+import { calendarMonthNow, localDateIso } from '../shared/calendarMonth';
 import { monthlyPortion, spreadMonthsLabel } from '../shared/monthSpread';
 import { nextDueDateForSub, upcomingDuesFromSubs } from '../shared/recurringDue';
 import type { BudgetCategory, BudgetSubcategory, Profile, Transaction } from '../shared/types';
@@ -25,7 +25,7 @@ import type { BudgetCategory, BudgetSubcategory, Profile, Transaction } from '..
 const domain = useDomainStore();
 const toast = useToast();
 
-const viewingMonth = calendarMonthNow();
+const viewingMonth = ref(calendarMonthNow());
 
 const categories = ref<BudgetCategory[]>([]);
 const subcategories = ref<BudgetSubcategory[]>([]);
@@ -57,8 +57,8 @@ const newTargetAmount = ref<number | null>(null);
 const newMinAmount = ref<number | null>(null);
 const newMaxAmount = ref<number | null>(null);
 const newSpreadMonths = ref(1);
-const newSpreadStartMonth = ref(viewingMonth);
-const newDueDay = ref<number | null>(null);
+const newSpreadStartMonth = ref(viewingMonth.value);
+const newNextDueDate = ref('');
 
 const activeProfile = computed<Profile | null>(() => {
   const id = domain.activeProfileId;
@@ -75,7 +75,7 @@ function formatMoney(amount: number) {
 }
 
 const monthLabel = computed(() => {
-  const [y, m] = viewingMonth.split('-');
+  const [y, m] = viewingMonth.value.split('-');
   const d = new Date(Number(y), Number(m) - 1, 1);
   return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 });
@@ -102,24 +102,26 @@ const monthIncomeBoost = computed(() => {
 
 async function loadCategories() {
   if (!activeBudget.value || !domain.activeProfileId) return;
+  viewingMonth.value = calendarMonthNow();
   const result = await window.fundlog.category.listByBudget(activeBudget.value.id);
   categories.value = result.categories;
   subcategories.value = result.subcategories;
+  const month = viewingMonth.value;
   const [unexpected, purchases, goalContrib] = await Promise.all([
     window.fundlog.transaction.listUnexpected(
       domain.activeProfileId,
       activeBudget.value.id,
-      viewingMonth,
+      month,
     ),
     window.fundlog.transaction.listPurchases(
       domain.activeProfileId,
       activeBudget.value.id,
-      viewingMonth,
+      month,
     ),
     window.fundlog.transaction.listGoalContributions(
       domain.activeProfileId,
       activeBudget.value.id,
-      viewingMonth,
+      month,
     ),
   ]);
   unexpectedTxs.value = unexpected;
@@ -141,7 +143,7 @@ const groupedSubcategories = computed(() => {
 const percentOfBudget = (sub: BudgetSubcategory) => {
   if (!activeBudget.value || !planningMonthIncome.value) return 0;
   const income = planningMonthIncome.value;
-  const amt = plannedAmountFromSub(sub, viewingMonth);
+  const amt = plannedAmountFromSub(sub, viewingMonth.value);
   if (!amt) return 0;
   return Math.min(100, (amt / income) * 100);
 };
@@ -225,7 +227,7 @@ const plannedBarResult = computed(() =>
     purchaseTxs.value,
     goalContributionTxs.value,
     planningMonthIncome.value,
-    viewingMonth,
+    viewingMonth.value,
   ),
 );
 
@@ -240,7 +242,7 @@ const categoryImpact = computed(() =>
     subcategories.value,
     purchaseTxs.value,
     unexpectedTxs.value,
-    viewingMonth,
+    viewingMonth.value,
   ),
 );
 
@@ -283,9 +285,9 @@ const totalPercent = computed(() => {
 const upcomingDues = computed(() =>
   upcomingDuesFromSubs(
     subcategories.value,
-    new Date().toISOString().slice(0, 10),
+    localDateIso(),
     30,
-    viewingMonth,
+    viewingMonth.value,
   ),
 );
 
@@ -297,8 +299,8 @@ function resetSubForm() {
   newMinAmount.value = null;
   newMaxAmount.value = null;
   newSpreadMonths.value = 1;
-  newSpreadStartMonth.value = viewingMonth;
-  newDueDay.value = null;
+  newSpreadStartMonth.value = viewingMonth.value;
+  newNextDueDate.value = '';
 }
 
 function cancelSubForm() {
@@ -321,13 +323,12 @@ function startLogPurchase(sub: BudgetSubcategory) {
 
 async function submitPurchase(sub: BudgetSubcategory) {
   if (!activeBudget.value || !domain.activeProfileId || !purchaseAmount.value) return;
-  const now = new Date();
   try {
     await window.fundlog.transaction.createManual({
       profileId: domain.activeProfileId,
       budgetId: activeBudget.value.id,
       subcategoryId: sub.id,
-      date: now.toISOString().slice(0, 10),
+      date: localDateIso(),
       amount: purchaseAmount.value,
       description: purchaseLabel.value.trim() || sub.label,
       merchant: purchaseMerchant.value.trim() || null,
@@ -361,8 +362,9 @@ function startEditSub(sub: BudgetSubcategory) {
   newMinAmount.value = sub.minAmount ?? null;
   newMaxAmount.value = sub.maxAmount ?? null;
   newSpreadMonths.value = Math.max(1, sub.spreadMonths ?? 1);
-  newSpreadStartMonth.value = sub.spreadStartMonth ?? viewingMonth;
-  newDueDay.value = sub.dueDay ?? null;
+  newSpreadStartMonth.value = sub.spreadStartMonth ?? viewingMonth.value;
+  newNextDueDate.value =
+    nextDueDateForSub(sub, localDateIso()) ?? sub.nextDueDate ?? '';
 }
 
 async function submitEditSubcategory(category: BudgetCategory) {
@@ -379,7 +381,8 @@ async function submitEditSubcategory(category: BudgetCategory) {
     isFlexible: newType.value === 'variable',
     spreadMonths,
     spreadStartMonth: spreadMonths > 1 ? newSpreadStartMonth.value : null,
-    dueDay: spreadMonths > 1 ? newDueDay.value : null,
+    nextDueDate: newType.value === 'fixed' ? normalizeNextDueInput(newNextDueDate.value) : null,
+    dueDay: newType.value === 'fixed' ? dueDayFromNextDueInput(newNextDueDate.value) : null,
   });
   categories.value = result.categories;
   subcategories.value = result.subcategories;
@@ -400,24 +403,27 @@ async function deleteSubcategoryItem(sub: BudgetSubcategory) {
 
 function subSpreadHint(sub: BudgetSubcategory): string | null {
   const spread = Math.max(1, sub.spreadMonths ?? 1);
-  if (spread <= 1) return null;
-  const total = plannedTotalFromSub(sub);
-  const monthly = plannedAmountFromSub(sub, viewingMonth);
   const parts: string[] = [];
-  if (monthly <= 0) {
-    parts.push(
-      `${formatMoney(total)} every ${spreadMonthsLabel(spread)} (starts later)`,
-    );
-  } else {
-    parts.push(
-      `${formatMoney(total)} every ${spreadMonthsLabel(spread)} → ${formatMoney(monthly)}/mo`,
-    );
+  if (spread > 1) {
+    const total = plannedTotalFromSub(sub);
+    const monthly = plannedAmountFromSub(sub, viewingMonth.value);
+    if (monthly <= 0) {
+      parts.push(
+        `${formatMoney(total)} every ${spreadMonthsLabel(spread)} (starts later)`,
+      );
+    } else {
+      parts.push(
+        `${formatMoney(total)} every ${spreadMonthsLabel(spread)} → ${formatMoney(monthly)}/mo`,
+      );
+    }
   }
-  const nextDue = nextDueDateForSub(sub, new Date().toISOString().slice(0, 10));
+  const nextDue = nextDueDateForSub(sub, localDateIso());
   if (nextDue) {
     parts.push(`next due ${nextDue}`);
+  } else if (sub.dueDay != null) {
+    parts.push(`due day ${sub.dueDay}`);
   }
-  return parts.join(' · ');
+  return parts.length ? parts.join(' · ') : null;
 }
 
 function lineItemPlannedPrimary(sub: BudgetSubcategory): string {
@@ -426,7 +432,7 @@ function lineItemPlannedPrimary(sub: BudgetSubcategory): string {
     const max = sub.maxAmount ?? min;
     return `${formatMoney(min)} – ${formatMoney(max)}`;
   }
-  return formatMoney(plannedAmountFromSub(sub, viewingMonth));
+  return formatMoney(plannedAmountFromSub(sub, viewingMonth.value));
 }
 
 function lineItemPlannedSuffix(sub: BudgetSubcategory): string {
@@ -436,6 +442,18 @@ function lineItemPlannedSuffix(sub: BudgetSubcategory): string {
 function lineItemPlannedNote(sub: BudgetSubcategory): string | null {
   if (sub.isFlexible) return null;
   return subSpreadHint(sub);
+}
+
+function normalizeNextDueInput(value: string): string | null {
+  const raw = value.trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function dueDayFromNextDueInput(value: string): number | null {
+  const next = normalizeNextDueInput(value);
+  if (!next) return null;
+  const day = Number(next.slice(8, 10));
+  return Number.isFinite(day) && day >= 1 && day <= 31 ? day : null;
 }
 
 function previewMonthlyFromForm(): number | null {
@@ -459,7 +477,8 @@ async function submitSubcategory(category: BudgetCategory) {
     isFlexible: newType.value === 'variable',
     spreadMonths,
     spreadStartMonth: spreadMonths > 1 ? newSpreadStartMonth.value : null,
-    dueDay: spreadMonths > 1 ? newDueDay.value : null,
+    nextDueDate: newType.value === 'fixed' ? normalizeNextDueInput(newNextDueDate.value) : null,
+    dueDay: newType.value === 'fixed' ? dueDayFromNextDueInput(newNextDueDate.value) : null,
   });
   categories.value = result.categories;
   subcategories.value = result.subcategories;
@@ -888,7 +907,10 @@ async function submitSubcategory(category: BudgetCategory) {
                           />
                         </label>
                       </div>
-                      <div v-if="newType === 'fixed' && newSpreadMonths > 1">
+                      <div
+                        v-if="newType === 'fixed' && newSpreadMonths > 1"
+                        class="category-line-form__full"
+                      >
                         <label class="form-label">
                           Starts
                           <input
@@ -901,17 +923,21 @@ async function submitSubcategory(category: BudgetCategory) {
                           Total is split across each {{ newSpreadMonths }}-month
                           cycle and renews.
                         </p>
-                        <label class="form-label mt-2">
-                          Due day
+                      </div>
+                      <div v-if="newType === 'fixed'" class="category-line-form__full">
+                        <label class="form-label">
+                          Next due date
                           <input
-                            v-model.number="newDueDay"
-                            type="number"
-                            min="1"
-                            max="31"
+                            v-model="newNextDueDate"
+                            type="date"
                             class="form-control form-control-sm"
-                            placeholder="e.g. 1"
                           />
                         </label>
+                        <p class="form-text small mb-0">
+                          Set or change the next due date for this bill. After it
+                          passes, it advances by the Every (mo) interval. Leave
+                          blank if none.
+                        </p>
                       </div>
                       <div v-if="newType === 'variable'">
                         <label class="form-label">
@@ -1029,7 +1055,10 @@ async function submitSubcategory(category: BudgetCategory) {
                       />
                     </label>
                   </div>
-                  <div v-if="newType === 'fixed' && newSpreadMonths > 1">
+                  <div
+                    v-if="newType === 'fixed' && newSpreadMonths > 1"
+                    class="category-line-form__full"
+                  >
                     <label class="form-label">
                       Starts
                       <input
@@ -1042,17 +1071,21 @@ async function submitSubcategory(category: BudgetCategory) {
                       Total is split across each {{ newSpreadMonths }}-month
                       cycle and renews.
                     </p>
-                    <label class="form-label mt-2">
-                      Due day
+                  </div>
+                  <div v-if="newType === 'fixed'" class="category-line-form__full">
+                    <label class="form-label">
+                      Next due date
                       <input
-                        v-model.number="newDueDay"
-                        type="number"
-                        min="1"
-                        max="31"
+                        v-model="newNextDueDate"
+                        type="date"
                         class="form-control form-control-sm"
-                        placeholder="e.g. 1"
                       />
                     </label>
+                    <p class="form-text small mb-0">
+                      Set or change the next due date for this bill. After it
+                      passes, it advances by the Every (mo) interval. Leave
+                      blank if none.
+                    </p>
                   </div>
                   <div
                     v-if="newType === 'fixed' && previewMonthlyFromForm() != null && newSpreadMonths > 1"

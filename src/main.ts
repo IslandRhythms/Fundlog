@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   nativeTheme,
+  shell,
 } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
@@ -30,6 +31,11 @@ import type { AppPrefs, Transaction, Receipt } from './shared/types';
 
 if (started) {
   app.quit();
+}
+
+// Helps Windows use the correct taskbar icon/grouping in packaged builds.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.fundlog.app');
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -62,6 +68,13 @@ const createMainWindow = () => {
       sandbox: true,
     },
   });
+
+  const iconPath = resolveAppIcon();
+  try {
+    mainWindow.setIcon(iconPath);
+  } catch {
+    // Icon path may be missing in some dev setups; window still opens.
+  }
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -386,6 +399,7 @@ ipcMain.handle(
       spreadMonths?: number;
       spreadStartMonth?: string | null;
       dueDay?: number | null;
+      nextDueDate?: string | null;
       sortOrder?: number;
     },
   ) => {
@@ -409,6 +423,7 @@ ipcMain.handle(
       spreadMonths?: number;
       spreadStartMonth?: string | null;
       dueDay?: number | null;
+      nextDueDate?: string | null;
     },
   ) => {
     return CategoryRepository.updateSubcategory(args);
@@ -508,6 +523,13 @@ ipcMain.handle(
       args.month,
     );
     return { deleted };
+  },
+);
+
+ipcMain.handle(
+  'transaction:delete',
+  (_event, args: { id: number; profileId: number }): void => {
+    TransactionRepository.delete(args);
   },
 );
 
@@ -747,6 +769,20 @@ ipcMain.handle(
   'receipt:listByTransaction',
   (_event, args: { transactionId: number }) => {
     return ReceiptRepository.listByTransaction(args.transactionId);
+  },
+);
+
+ipcMain.handle(
+  'receipt:openFile',
+  async (_event, args: { filePath: string }): Promise<void> => {
+    const filePath = args.filePath?.trim();
+    if (!filePath) {
+      throw new Error('Missing receipt file path.');
+    }
+    const err = await shell.openPath(filePath);
+    if (err) {
+      throw new Error(err);
+    }
   },
 );
 

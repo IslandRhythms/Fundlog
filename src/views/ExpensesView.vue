@@ -13,7 +13,7 @@ import { computeCategoryImpact } from '../shared/categoryImpact';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal, showBsModal } from '../shared/hideBsModal';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
-import { calendarMonthNow } from '../shared/calendarMonth';
+import { calendarMonthNow, localDateIso } from '../shared/calendarMonth';
 import { monthlyPortion } from '../shared/monthSpread';
 import {
   computePlannedExpenseBarSegments,
@@ -48,6 +48,7 @@ const purchaseMerchant = ref('');
 const barMetric = ref<'amount' | 'count'>('amount');
 const vendorScope = ref<'month' | 'lifetime'>('month');
 const activitySearch = ref('');
+const viewingMonth = ref(calendarMonthNow());
 
 const activeBudget = computed(() => domain.activeBudget);
 
@@ -67,12 +68,10 @@ const groupedSubcategories = computed(() => {
   return grouped;
 });
 
-const viewingMonth = calendarMonthNow();
-
 const budgetIncome = computed(() => {
   const b = activeBudget.value;
   if (!b) return 0;
-  return domain.effectiveMonthlyIncomeFor(b.id, viewingMonth);
+  return domain.effectiveMonthlyIncomeFor(b.id, viewingMonth.value);
 });
 
 const plannedBarResult = computed(() =>
@@ -84,7 +83,7 @@ const plannedBarResult = computed(() =>
     purchases.value,
     goalContributions.value,
     budgetIncome.value,
-    viewingMonth,
+    viewingMonth.value,
   ),
 );
 
@@ -93,7 +92,7 @@ const headroom = computed(() =>
 );
 
 const monthLabel = computed(() => {
-  const [y, m] = viewingMonth.split('-');
+  const [y, m] = viewingMonth.value.split('-');
   const d = new Date(Number(y), Number(m) - 1, 1);
   return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 });
@@ -103,7 +102,7 @@ function formatMoney(amount: number) {
 }
 
 function txMonthImpact(tx: Transaction) {
-  return transactionMonthlyImpact(tx, viewingMonth);
+  return transactionMonthlyImpact(tx, viewingMonth.value);
 }
 
 function txCategoryColor(tx: Transaction, fallback: string) {
@@ -112,26 +111,28 @@ function txCategoryColor(tx: Transaction, fallback: string) {
 
 async function loadData() {
   if (!activeBudget.value || !domain.activeProfileId) return;
+  viewingMonth.value = calendarMonthNow();
   loading.value = true;
   try {
     const catsResult = await window.fundlog.category.listByBudget(activeBudget.value.id);
     categories.value = catsResult.categories;
     subcategories.value = catsResult.subcategories;
+    const month = viewingMonth.value;
     const [tx, purchaseTx, goalTx] = await Promise.all([
       window.fundlog.transaction.listUnexpected(
         domain.activeProfileId,
         activeBudget.value.id,
-        viewingMonth,
+        month,
       ),
       window.fundlog.transaction.listPurchases(
         domain.activeProfileId,
         activeBudget.value.id,
-        viewingMonth,
+        month,
       ),
       window.fundlog.transaction.listGoalContributions(
         domain.activeProfileId,
         activeBudget.value.id,
-        viewingMonth,
+        month,
       ),
     ]);
     unexpected.value = tx;
@@ -180,14 +181,14 @@ const spreadPreview = computed(() => {
 
 const totalUnexpected = computed(() =>
   unexpected.value.reduce(
-    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth),
+    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth.value),
     0,
   ),
 );
 
 const totalPurchases = computed(() =>
   purchases.value.reduce(
-    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth),
+    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth.value),
     0,
   ),
 );
@@ -205,12 +206,16 @@ function matchesActivitySearch(tx: Transaction): boolean {
   return merchant.includes(q) || description.includes(q);
 }
 
+const purchasesThisMonth = computed(() =>
+  purchases.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth.value) > 0),
+);
+
 const recentPurchases = computed(() =>
-  purchases.value.filter(matchesActivitySearch).slice(0, 10),
+  purchasesThisMonth.value.filter(matchesActivitySearch).slice(0, 10),
 );
 
 const unexpectedThisMonth = computed(() =>
-  unexpected.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth) > 0),
+  unexpected.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth.value) > 0),
 );
 
 const mostCommonCategory = computed(() => {
@@ -241,7 +246,7 @@ const unexpectedBarSegments = computed(() => {
   let uncCount = 0;
 
   for (const tx of unexpectedThisMonth.value) {
-    const impact = transactionMonthlyImpact(tx, viewingMonth);
+    const impact = transactionMonthlyImpact(tx, viewingMonth.value);
     const cat = parentCategoryForSubcategory(tx.subcategoryId);
     if (!cat) {
       uncAmount += impact;
@@ -303,7 +308,7 @@ const goalById = computed(() => {
 
 const totalGoalSavingsRecorded = computed(() =>
   goalContributions.value.reduce(
-    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth),
+    (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth.value),
     0,
   ),
 );
@@ -313,9 +318,18 @@ const goalSavingsPercent = computed(() => {
   return Math.min(100, (totalGoalSavingsRecorded.value / budgetIncome.value) * 100);
 });
 
-const recentGoalContributions = computed(() => goalContributions.value.slice(0, 10));
+const goalContributionsThisMonth = computed(() =>
+  goalContributions.value.filter(
+    (tx) => transactionMonthlyImpact(tx, viewingMonth.value) > 0,
+  ),
+);
 
-const plannedAmount = (sub: BudgetSubcategory) => plannedAmountFromSub(sub, viewingMonth);
+const recentGoalContributions = computed(() =>
+  goalContributionsThisMonth.value.slice(0, 10),
+);
+
+const plannedAmount = (sub: BudgetSubcategory) =>
+  plannedAmountFromSub(sub, viewingMonth.value);
 
 const totalPlanned = computed(() =>
   subcategories.value.reduce((sum, sub) => sum + plannedAmount(sub), 0),
@@ -358,7 +372,7 @@ const vendorBreakdown = computed<VendorRow[]>(() => {
     const value =
       vendorScope.value === 'lifetime'
         ? tx.amount
-        : transactionMonthlyImpact(tx, viewingMonth);
+        : transactionMonthlyImpact(tx, viewingMonth.value);
     if (value <= 0) continue;
     const raw = tx.merchant?.trim() ?? '';
     const hasVendor = raw.length > 0;
@@ -416,7 +430,7 @@ const categoryBudgetImpact = computed(() =>
     subcategories.value,
     purchases.value,
     unexpected.value,
-    viewingMonth,
+    viewingMonth.value,
   ),
 );
 
@@ -456,8 +470,7 @@ async function addUnexpected() {
     toast.error('Add at least one line item under this category on Budgets first.');
     return;
   }
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
+  const date = localDateIso();
   try {
     await window.fundlog.transaction.createManual({
       profileId: domain.activeProfileId,
@@ -497,8 +510,7 @@ async function addPurchase() {
     return;
   }
   const cat = categoryById.value[purchaseCategoryId.value];
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
+  const date = localDateIso();
   try {
     await window.fundlog.transaction.createManual({
       profileId: domain.activeProfileId,
@@ -522,6 +534,26 @@ async function addPurchase() {
   } catch (e) {
     console.error(e);
     toast.error('Could not log purchase.');
+  }
+}
+
+async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
+  if (!domain.activeProfileId) return;
+  const entryLabel =
+    kind === 'purchase'
+      ? tx.description || 'this purchase'
+      : tx.description || 'this unexpected expense';
+  if (!confirm(`Remove ${entryLabel}?`)) return;
+  try {
+    await window.fundlog.transaction.delete({
+      id: tx.id,
+      profileId: domain.activeProfileId,
+    });
+    await loadData();
+    toast.success(kind === 'purchase' ? 'Purchase removed.' : 'Unexpected expense removed.');
+  } catch (e) {
+    console.error(e);
+    toast.error(kind === 'purchase' ? 'Could not remove purchase.' : 'Could not remove expense.');
   }
 }
 </script>
@@ -769,9 +801,9 @@ async function addPurchase() {
             class="expenses-panel expenses-panel--purchase"
             title="Purchases"
             :meta="
-              purchases.length
-                ? `${purchases.length} logged · ${formatMoney(totalPurchases)} this month`
-                : 'None yet'
+              purchasesThisMonth.length
+                ? `${purchasesThisMonth.length} this month · ${formatMoney(totalPurchases)}`
+                : 'None this month'
             "
             storage-key="expenses-purchases"
           >
@@ -812,10 +844,17 @@ async function addPurchase() {
                     {{ formatMoney(txMonthImpact(tx)) }}/mo
                   </span>
                 </div>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-danger expense-activity-item__remove"
+                  @click="removeExpense(tx, 'purchase')"
+                >
+                  Remove
+                </button>
               </li>
             </ul>
             <p v-else class="expenses-panel__empty small mb-0">
-              No purchases logged yet. Use <strong>Log purchase</strong> above.
+              No purchases this month. Use <strong>Log purchase</strong> above.
             </p>
           </CollapsibleSection>
         </div>
@@ -900,6 +939,13 @@ async function addPurchase() {
                     {{ formatMoney(txMonthImpact(tx)) }}/mo
                   </span>
                 </div>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-danger expense-activity-item__remove"
+                  @click="removeExpense(tx, 'unexpected')"
+                >
+                  Remove
+                </button>
               </li>
             </ul>
           </CollapsibleSection>
@@ -910,9 +956,9 @@ async function addPurchase() {
             class="expenses-panel expenses-panel--goals"
             title="Goal savings"
             :meta="
-              goalContributions.length
-                ? `${goalContributions.length} logged · ${formatMoney(totalGoalSavingsRecorded)} this month`
-                : 'None yet'
+              goalContributionsThisMonth.length
+                ? `${goalContributionsThisMonth.length} this month · ${formatMoney(totalGoalSavingsRecorded)}`
+                : 'None this month'
             "
             :default-expanded="false"
             storage-key="expenses-goal-savings"

@@ -4,7 +4,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 let db: Database.Database | null = null;
 
@@ -422,6 +422,18 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
       )
       .run(10, now);
+  }
+
+  if (current < 11 && SCHEMA_VERSION >= 11) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      ALTER TABLE budget_subcategories ADD COLUMN next_due_date TEXT;
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(11, now);
   }
 }
 

@@ -3923,7 +3923,7 @@ html {
 
 .expense-activity-item {
   display: grid;
-  grid-template-columns: 4px 1fr auto;
+  grid-template-columns: 4px 1fr auto auto;
   gap: 0.65rem 0.75rem;
   align-items: center;
   padding: 0.6rem 0.7rem;
@@ -3979,6 +3979,10 @@ html {
   font-weight: 600;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
+}
+
+.expense-activity-item__remove {
+  white-space: nowrap;
 }
 
 .expense-spread-badge {
@@ -4430,6 +4434,366 @@ html {
   color: var(--status-text) !important;
   font-size: 0.875rem;
   line-height: 1.45;
+}
+
+.transactions-view .tx-page-intro {
+  max-width: 40rem;
+}
+
+.transactions-view .view-page-eyebrow {
+  color: color-mix(in srgb, #0d9488 55%, var(--muted));
+}
+
+.transactions-view .tx-page-intro a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.transactions-view .tx-page-intro a:hover {
+  text-decoration: underline;
+}
+
+.tx-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
+  gap: 0.65rem;
+}
+
+.tx-quick-action {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.tx-quick-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--card-border));
+  transform: translateY(-1px);
+}
+
+.tx-quick-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tx-quick-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tx-quick-action--add {
+  border-top: 3px solid color-mix(in srgb, #0d9488 55%, var(--card-border));
+}
+
+.tx-quick-action--import {
+  border-top: 3px solid color-mix(in srgb, var(--accent) 50%, var(--card-border));
+}
+
+.tx-quick-action--export {
+  border-top: 3px solid color-mix(in srgb, var(--muted) 55%, var(--card-border));
+}
+
+.tx-quick-action__glyph {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-sm);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tx-quick-action--add .tx-quick-action__glyph {
+  background: color-mix(in srgb, var(--card-bg) 65%, #0d9488 35%);
+  color: #0d9488;
+}
+
+.tx-quick-action--import .tx-quick-action__glyph {
+  background: color-mix(in srgb, var(--card-bg) 65%, var(--accent) 35%);
+  color: var(--accent);
+}
+
+.tx-quick-action--export .tx-quick-action__glyph {
+  background: color-mix(in srgb, var(--card-bg) 70%, var(--muted) 30%);
+  color: var(--text-h);
+}
+
+.tx-quick-action__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.tx-quick-action__label {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text-h);
+  line-height: 1.25;
+}
+
+.tx-quick-action__hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.tx-filters {
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 94%, var(--muted) 6%);
+}
+
+.tx-filter-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.tx-panel {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  border-top: 3px solid color-mix(in srgb, #0d9488 45%, var(--card-border));
+  overflow: hidden;
+}
+
+.tx-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.tx-panel__title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.tx-panel__meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.tx-panel__loading {
+  padding: 1.25rem 1.1rem;
+}
+
+.tx-empty {
+  padding: 2rem 1.25rem;
+  text-align: center;
+}
+
+.tx-empty__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.tx-empty__muted {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.45;
+  max-width: 26rem;
+  margin-inline: auto;
+}
+
+.tx-table-scroll {
+  overflow-x: auto;
+  max-height: min(28rem, 60vh);
+  overflow-y: auto;
+}
+
+.main .tx-table {
+  width: 100%;
+  min-width: 42rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--card-text);
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--card-text);
+  --bs-table-border-color: var(--card-border);
+  --bs-table-striped-bg: transparent;
+}
+
+.main .tx-table thead th {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border-bottom-color: var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--muted) 12%);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+  padding: 0.65rem 0.85rem;
+}
+
+.main .tx-table tbody td {
+  padding: 0.7rem 0.85rem;
+  border-bottom-color: var(--card-border);
+  vertical-align: middle;
+}
+
+.main .tx-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+[data-theme='light'] .main .tx-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--card-bg) 82%, #0d9488 18%);
+}
+
+[data-theme='dark'] .main .tx-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--card-bg) 78%, #0d9488 22%);
+}
+
+.tx-table__date {
+  white-space: nowrap;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tx-table__details {
+  min-width: 10rem;
+}
+
+.tx-table__title {
+  display: block;
+  font-weight: 600;
+  color: var(--text-h);
+  line-height: 1.3;
+}
+
+.tx-table__sub {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.1rem;
+}
+
+.tx-table__amount {
+  font-weight: 700;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tx-kind {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 90%, var(--muted) 10%);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tx-kind--purchase {
+  color: var(--fund-purchase);
+  border-color: color-mix(in srgb, var(--fund-purchase) 35%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--fund-purchase) 18%);
+}
+
+.tx-kind--unexpected {
+  color: var(--fund-unexpected);
+  border-color: color-mix(in srgb, var(--fund-unexpected) 35%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--fund-unexpected) 18%);
+}
+
+.tx-kind--goal {
+  color: var(--fund-savings);
+  border-color: color-mix(in srgb, var(--fund-savings) 35%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--fund-savings) 18%);
+}
+
+.tx-kind--csv {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--accent) 18%);
+}
+
+.tx-kind--ledger {
+  color: var(--text-h);
+}
+
+.tx-table__receipts {
+  min-width: 9.5rem;
+}
+
+.tx-receipt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tx-receipt-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.tx-receipt-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #0d9488 40%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 78%, #0d9488 22%);
+  color: #0d9488;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tx-receipt-pill--mismatch {
+  border-color: color-mix(in srgb, #dc3545 45%, var(--card-border));
+  background: color-mix(in srgb, var(--card-bg) 78%, #dc3545 22%);
+  color: #dc3545;
+}
+
+.tx-panel__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.75rem 1.1rem;
+  border-top: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 92%, var(--muted) 8%);
 }
 
 .transactions-view .transactions-table-wrapper {

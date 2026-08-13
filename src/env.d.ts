@@ -91,6 +91,7 @@ interface Window {
         spreadMonths?: number;
         spreadStartMonth?: string | null;
         dueDay?: number | null;
+        nextDueDate?: string | null;
         sortOrder?: number;
       }): Promise<{
         categories: import('./shared/types').BudgetCategory[];
@@ -108,6 +109,7 @@ interface Window {
         spreadMonths?: number;
         spreadStartMonth?: string | null;
         dueDay?: number | null;
+        nextDueDate?: string | null;
       }): Promise<{
         categories: import('./shared/types').BudgetCategory[];
         subcategories: import('./shared/types').BudgetSubcategory[];
@@ -180,6 +182,7 @@ interface Window {
         budgetId: number,
         month: string,
       ): Promise<{ deleted: number }>;
+      delete(input: { id: number; profileId: number }): Promise<void>;
     };
     card: {
       listByProfile(profileId: number): Promise<import('./shared/types').CreditCard[]>;
@@ -314,6 +317,7 @@ interface Window {
         expectedAmount?: number | null;
         merchant?: string | null;
       }): Promise<import('./shared/types').Receipt | null>;
+      openFile(filePath: string): Promise<void>;
     };
   };
 }

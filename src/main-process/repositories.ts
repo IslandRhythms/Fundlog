@@ -68,6 +68,18 @@ function isoMonthRange(month: string): { start: string; endExclusive: string } {
   return { start, endExclusive };
 }
 
+function normalizeNextDueDate(value: string | null | undefined): string | null {
+  const raw = value?.trim().slice(0, 10) ?? '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const y = Number(raw.slice(0, 4));
+  const mo = Number(raw.slice(5, 7));
+  const d = Number(raw.slice(8, 10));
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const last = new Date(y, mo, 0).getDate();
+  if (d > last) return null;
+  return raw;
+}
+
 export const ProfileRepository = {
   list(): Profile[] {
     return db()
@@ -296,6 +308,7 @@ export const CategoryRepository = {
                 min_amount AS minAmount, max_amount AS maxAmount,
                 is_flexible AS isFlexible, spread_months AS spreadMonths,
                 spread_start_month AS spreadStartMonth, due_day AS dueDay,
+                next_due_date AS nextDueDate,
                 sort_order AS sortOrder
          FROM budget_subcategories
          WHERE budget_id = ?
@@ -327,17 +340,31 @@ export const CategoryRepository = {
     spreadMonths?: number;
     spreadStartMonth?: string | null;
     dueDay?: number | null;
+    nextDueDate?: string | null;
     sortOrder?: number;
   }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
     const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
+    const nextDueDate = normalizeNextDueDate(input.nextDueDate);
+    const dueDayFromDate =
+      nextDueDate != null ? Number(nextDueDate.slice(8, 10)) : null;
     const dueDay =
-      spreadMonths > 1 && input.dueDay != null && Number.isFinite(input.dueDay)
-        ? Math.min(31, Math.max(1, Math.floor(input.dueDay)))
+      !input.isFlexible &&
+      (dueDayFromDate != null ||
+        (input.dueDay != null &&
+          Number.isFinite(input.dueDay) &&
+          input.dueDay >= 1))
+        ? Math.min(
+            31,
+            Math.max(
+              1,
+              Math.floor(dueDayFromDate ?? (input.dueDay as number)),
+            ),
+          )
         : null;
     const stmt = db().prepare(
       `INSERT INTO budget_subcategories
-       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, spread_months, spread_start_month, due_day, sort_order)
-       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @spreadMonths, @spreadStartMonth, @dueDay, @sortOrder)`
+       (budget_id, parent_category_id, label, target_percent, target_amount, min_amount, max_amount, is_flexible, spread_months, spread_start_month, due_day, next_due_date, sort_order)
+       VALUES (@budgetId, @parentCategoryId, @label, @targetPercent, @targetAmount, @minAmount, @maxAmount, @isFlexible, @spreadMonths, @spreadStartMonth, @dueDay, @nextDueDate, @sortOrder)`
     );
     stmt.run({
       budgetId: input.budgetId,
@@ -351,7 +378,8 @@ export const CategoryRepository = {
       spreadMonths,
       spreadStartMonth:
         spreadMonths > 1 ? input.spreadStartMonth ?? null : null,
-      dueDay,
+      dueDay: input.isFlexible ? null : dueDay,
+      nextDueDate: input.isFlexible ? null : nextDueDate,
       sortOrder: input.sortOrder ?? 99,
     });
     return this.listByBudget(input.budgetId);
@@ -368,11 +396,25 @@ export const CategoryRepository = {
     spreadMonths?: number;
     spreadStartMonth?: string | null;
     dueDay?: number | null;
+    nextDueDate?: string | null;
   }): { categories: BudgetCategory[]; subcategories: BudgetSubcategory[] } {
     const spreadMonths = Math.max(1, Math.floor(input.spreadMonths ?? 1));
+    const nextDueDate = normalizeNextDueDate(input.nextDueDate);
+    const dueDayFromDate =
+      nextDueDate != null ? Number(nextDueDate.slice(8, 10)) : null;
     const dueDay =
-      spreadMonths > 1 && input.dueDay != null && Number.isFinite(input.dueDay)
-        ? Math.min(31, Math.max(1, Math.floor(input.dueDay)))
+      !input.isFlexible &&
+      (dueDayFromDate != null ||
+        (input.dueDay != null &&
+          Number.isFinite(input.dueDay) &&
+          input.dueDay >= 1))
+        ? Math.min(
+            31,
+            Math.max(
+              1,
+              Math.floor(dueDayFromDate ?? (input.dueDay as number)),
+            ),
+          )
         : null;
     db()
       .prepare(
@@ -385,7 +427,8 @@ export const CategoryRepository = {
              is_flexible = @isFlexible,
              spread_months = @spreadMonths,
              spread_start_month = @spreadStartMonth,
-             due_day = @dueDay
+             due_day = @dueDay,
+             next_due_date = @nextDueDate
          WHERE id = @id AND budget_id = @budgetId`,
       )
       .run({
@@ -400,7 +443,8 @@ export const CategoryRepository = {
         spreadMonths,
         spreadStartMonth:
           spreadMonths > 1 ? input.spreadStartMonth ?? null : null,
-        dueDay,
+        dueDay: input.isFlexible ? null : dueDay,
+        nextDueDate: input.isFlexible ? null : nextDueDate,
       });
     return this.listByBudget(input.budgetId);
   },
@@ -733,6 +777,26 @@ export const TransactionRepository = {
       )
       .run(budgetId, start, endExclusive);
     return result.changes;
+  },
+
+  delete(input: { id: number; profileId: number }): void {
+    const row = db()
+      .prepare(
+        'SELECT id FROM transactions WHERE id = ? AND profile_id = ?',
+      )
+      .get(input.id, input.profileId) as { id: number } | undefined;
+    if (!row) {
+      throw new Error('Transaction not found for this profile.');
+    }
+    const run = db().transaction(() => {
+      db()
+        .prepare('DELETE FROM receipts WHERE transaction_id = ?')
+        .run(input.id);
+      db()
+        .prepare('DELETE FROM transactions WHERE id = ? AND profile_id = ?')
+        .run(input.id, input.profileId);
+    });
+    run();
   },
 };
 

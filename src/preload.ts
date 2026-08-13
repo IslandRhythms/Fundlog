@@ -111,6 +111,7 @@ export const api = {
       spreadMonths?: number;
       spreadStartMonth?: string | null;
       dueDay?: number | null;
+      nextDueDate?: string | null;
       sortOrder?: number;
     }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
       ipcRenderer.invoke('subcategory:create', input),
@@ -126,6 +127,7 @@ export const api = {
       spreadMonths?: number;
       spreadStartMonth?: string | null;
       dueDay?: number | null;
+      nextDueDate?: string | null;
     }): Promise<{ categories: BudgetCategory[]; subcategories: BudgetSubcategory[] }> =>
       ipcRenderer.invoke('subcategory:update', input),
     delete: async (input: {
@@ -210,6 +212,10 @@ export const api = {
       month: string,
     ): Promise<{ deleted: number }> =>
       ipcRenderer.invoke('transaction:clearForBudgetMonth', { budgetId, month }),
+    delete: async (input: {
+      id: number;
+      profileId: number;
+    }): Promise<void> => ipcRenderer.invoke('transaction:delete', input),
   },
   card: {
     listByProfile: async (profileId: number): Promise<CreditCard[]> =>
@@ -356,6 +362,8 @@ export const api = {
       merchant?: string | null;
     }): Promise<Receipt | null> =>
       ipcRenderer.invoke('receipt:attachViaDialog', input),
+    openFile: async (filePath: string): Promise<void> =>
+      ipcRenderer.invoke('receipt:openFile', { filePath }),
   },
 };
 

@@ -6,6 +6,7 @@ import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
 import { formatMoney as formatMoneyExact } from '../shared/formatMoney';
+import { localDateIso } from '../shared/calendarMonth';
 import type {
   BudgetCategory,
   BudgetSubcategory,
@@ -39,7 +40,7 @@ const rawCsv = ref('');
 const importStatus = ref<string | null>(null);
 const exportStatus = ref<string | null>(null);
 
-const newDate = ref(new Date().toISOString().slice(0, 10));
+const newDate = ref(localDateIso());
 const newAmount = ref<number | null>(null);
 const newMerchant = ref('');
 const newDescription = ref('');
@@ -301,9 +302,48 @@ async function loadReceipts(tx: Transaction) {
       ...receiptMap.value,
       [tx.id]: receipts,
     };
+    if (!receipts.length) {
+      toast.info('No receipts attached to this transaction.');
+      return;
+    }
+    if (receipts.length === 1) {
+      await openReceipt(receipts[0]);
+    } else {
+      statusMessage.value = `${receipts.length} receipt(s) loaded — click a date to open.`;
+    }
   } catch (err) {
     console.error(err);
     statusMessage.value = 'Failed to load receipts.';
+    toast.error('Failed to load receipts.');
+  }
+}
+
+async function openReceipt(receipt: Receipt) {
+  try {
+    await window.fundlog.receipt.openFile(receipt.filePath);
+  } catch (err) {
+    console.error(err);
+    toast.error('Could not open receipt file.');
+  }
+}
+
+async function removeTransaction(tx: Transaction) {
+  if (!domain.activeProfileId) return;
+  const label = tx.description || tx.merchant || `transaction on ${tx.date}`;
+  if (!confirm(`Remove ${label}?`)) return;
+  try {
+    await window.fundlog.transaction.delete({
+      id: tx.id,
+      profileId: domain.activeProfileId,
+    });
+    const next = { ...receiptMap.value };
+    delete next[tx.id];
+    receiptMap.value = next;
+    await loadPage();
+    toast.success('Transaction removed.');
+  } catch (err) {
+    console.error(err);
+    toast.error('Could not remove transaction.');
   }
 }
 
@@ -314,8 +354,39 @@ function formatAmount(amount: number) {
   return formatMoneyExact(amount, code);
 }
 
+function formatTxDate(iso: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function txTitle(tx: Transaction) {
+  return tx.description?.trim() || tx.merchant?.trim() || 'Transaction';
+}
+
+function txKindLabel(tx: Transaction) {
+  if (tx.entryKind === 'purchase') return 'Purchase';
+  if (tx.entryKind === 'unexpected') return 'Unexpected';
+  if (tx.goalId != null) return 'Goal savings';
+  if (tx.source === 'csv') return 'Import';
+  return 'Ledger';
+}
+
+function txKindClass(tx: Transaction) {
+  if (tx.entryKind === 'purchase') return 'tx-kind--purchase';
+  if (tx.entryKind === 'unexpected') return 'tx-kind--unexpected';
+  if (tx.goalId != null) return 'tx-kind--goal';
+  if (tx.source === 'csv') return 'tx-kind--csv';
+  return 'tx-kind--ledger';
+}
+
 function resetAddForm() {
-  newDate.value = new Date().toISOString().slice(0, 10);
+  newDate.value = localDateIso();
   newAmount.value = null;
   newMerchant.value = '';
   newDescription.value = '';
@@ -364,188 +435,236 @@ function goTo(path: string) {
 
 <template>
   <div class="view transactions-view container-fluid">
-    <h2 class="mb-2">Transactions</h2>
-    <p class="view-intro mb-3">
-      Add transactions one at a time, or use Import / Export when you need CSV.
-    </p>
+    <header class="tx-page-header mb-4">
+      <p class="view-page-eyebrow mb-1">Activity</p>
+      <h2 class="mb-2">Transactions</h2>
+      <p class="view-subtitle tx-page-intro mb-0">
+        Browse and manage ledger entries for the active budget. Add one-off
+        transactions here, or use
+        <a href="#" @click.prevent="goTo('/expenses')">Expenses</a>
+        for purchases and unexpected spending tied to your plan.
+      </p>
+    </header>
 
     <p v-if="!domain.activeBudget" class="status-text mb-3">
       Select a budget to add or view transactions.
     </p>
 
-    <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
+    <div class="tx-quick-actions mb-3">
       <button
         type="button"
-        class="btn btn-sm btn-primary"
+        class="tx-quick-action tx-quick-action--add"
         data-bs-toggle="modal"
         data-bs-target="#addTransactionModal"
         :disabled="!domain.activeBudgetId"
       >
-        Add transaction…
+        <span class="tx-quick-action__glyph" aria-hidden="true">+</span>
+        <span class="tx-quick-action__copy">
+          <span class="tx-quick-action__label">Add transaction</span>
+          <span class="tx-quick-action__hint">One-off ledger entry</span>
+        </span>
       </button>
       <button
         type="button"
-        class="btn btn-sm btn-outline-primary"
+        class="tx-quick-action tx-quick-action--import"
         data-bs-toggle="modal"
         data-bs-target="#importCsvModal"
+        :disabled="!domain.activeBudgetId"
       >
-        Import CSV…
+        <span class="tx-quick-action__glyph" aria-hidden="true">↑</span>
+        <span class="tx-quick-action__copy">
+          <span class="tx-quick-action__label">Import CSV</span>
+          <span class="tx-quick-action__hint">Paste rows into this budget</span>
+        </span>
       </button>
       <button
         type="button"
-        class="btn btn-sm btn-outline-secondary"
+        class="tx-quick-action tx-quick-action--export"
         data-bs-toggle="modal"
         data-bs-target="#exportCsvModal"
       >
-        Export CSV…
-      </button>
-      <button
-        type="button"
-        class="btn btn-sm btn-outline-secondary"
-        @click="goTo('/expenses')"
-      >
-        Plan expenses for this budget
+        <span class="tx-quick-action__glyph" aria-hidden="true">↓</span>
+        <span class="tx-quick-action__copy">
+          <span class="tx-quick-action__label">Export CSV</span>
+          <span class="tx-quick-action__hint">Download current selection</span>
+        </span>
       </button>
     </div>
 
-    <div class="row g-2 align-items-end mb-3">
-      <div class="col-md-3">
-        <label class="form-label small mb-1">Search</label>
-        <input
-          v-model="filterQ"
-          type="search"
-          class="form-control form-control-sm"
-          placeholder="Merchant or description"
-          @keyup.enter="applyFilters"
-        />
-      </div>
-      <div class="col-md-2">
-        <label class="form-label small mb-1">From</label>
-        <input v-model="filterDateFrom" type="date" class="form-control form-control-sm" />
-      </div>
-      <div class="col-md-2">
-        <label class="form-label small mb-1">To</label>
-        <input v-model="filterDateTo" type="date" class="form-control form-control-sm" />
-      </div>
-      <div class="col-md-3">
-        <label class="form-label small mb-1">Line item</label>
-        <select v-model="filterSubcategoryId" class="form-select form-select-sm">
-          <option :value="null">All</option>
-          <option v-for="opt in subcategoryOptions" :key="opt.id" :value="opt.id">
-            {{ opt.label }}
-          </option>
-        </select>
-      </div>
-      <div class="col-md-2 d-flex flex-wrap gap-1">
-        <button type="button" class="btn btn-sm btn-primary" @click="applyFilters">
-          Apply
-        </button>
-        <button type="button" class="btn btn-sm btn-outline-secondary" @click="clearFilters">
-          Clear
-        </button>
-      </div>
-    </div>
-
-    <h3 class="h5 mb-3">Activity</h3>
-    <LoadingView v-if="loading" class="mb-3" message="Loading transactions…" />
-    <p v-else-if="!totalCount" class="status-text">
-      No transactions match. Use Add transaction… or Import CSV… above, or clear filters.
-    </p>
-
-    <div v-if="pageRows.length" class="transactions-table-wrapper mt-2">
-      <table class="transactions-table table table-dark table-striped table-sm align-middle">
-        <thead>
-          <tr>
-            <th scope="col">Date</th>
-            <th scope="col">Merchant</th>
-            <th scope="col">Description</th>
-            <th scope="col" class="text-end">Amount</th>
-            <th scope="col">Source</th>
-            <th scope="col">Receipts</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="tx in pageRows" :key="tx.id">
-            <td>{{ tx.date }}</td>
-            <td>{{ tx.merchant || '—' }}</td>
-            <td>{{ tx.description || '—' }}</td>
-            <td class="text-end">
-              {{ formatAmount(tx.amount) }}
-            </td>
-            <td>{{ tx.source }}</td>
-            <td class="receipts-cell">
-              <div class="receipts-actions mb-1 d-flex gap-1">
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline-light"
-                  @click="attachReceipt(tx)"
-                >
-                  Attach receipt
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline-secondary"
-                  @click="loadReceipts(tx)"
-                >
-                  View
-                </button>
-              </div>
-              <div
-                v-if="receiptMap[tx.id]?.length"
-                class="receipts-preview d-flex flex-wrap gap-1"
-              >
-                <div
-                  v-for="r in receiptMap[tx.id]"
-                  :key="r.id"
-                  class="receipt-pill badge rounded-pill text-bg-success"
-                  :class="{ 'receipt-pill-mismatch': isMismatched(r) }"
-                >
-                  <a
-                    :href="`file://${r.filePath}`"
-                    target="_blank"
-                    rel="noreferrer"
-                    class="text-decoration-none text-reset"
-                  >
-                    {{ new Date(r.uploadedAt).toLocaleDateString() }}
-                  </a>
-                  <span class="receipt-meta ms-1">
-                    <span v-if="r.expectedAmount != null">
-                      exp {{ formatAmount(r.expectedAmount) }}
-                    </span>
-                    <span v-if="r.extractedAmount != null">
-                      · ocr {{ formatAmount(r.extractedAmount) }}
-                    </span>
-                  </span>
-                </div>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
-        <span class="small text-muted">{{ pageLabel }}</span>
-        <div class="btn-group btn-group-sm">
-          <button
-            type="button"
-            class="btn btn-outline-secondary"
-            :disabled="pageIndex <= 0 || loading"
-            @click="prevPage"
+    <section class="tx-filters mb-3" aria-label="Filters">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="tx-filter-label" for="tx-filter-q">Search</label>
+          <input
+            id="tx-filter-q"
+            v-model="filterQ"
+            type="search"
+            class="form-control form-control-sm"
+            placeholder="Merchant or description"
+            @keyup.enter="applyFilters"
+          />
+        </div>
+        <div class="col-6 col-md-2">
+          <label class="tx-filter-label" for="tx-filter-from">From</label>
+          <input
+            id="tx-filter-from"
+            v-model="filterDateFrom"
+            type="date"
+            class="form-control form-control-sm"
+          />
+        </div>
+        <div class="col-6 col-md-2">
+          <label class="tx-filter-label" for="tx-filter-to">To</label>
+          <input
+            id="tx-filter-to"
+            v-model="filterDateTo"
+            type="date"
+            class="form-control form-control-sm"
+          />
+        </div>
+        <div class="col-md-3">
+          <label class="tx-filter-label" for="tx-filter-sub">Line item</label>
+          <select
+            id="tx-filter-sub"
+            v-model="filterSubcategoryId"
+            class="form-select form-select-sm"
           >
-            Previous
+            <option :value="null">All</option>
+            <option v-for="opt in subcategoryOptions" :key="opt.id" :value="opt.id">
+              {{ opt.label }}
+            </option>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex flex-wrap gap-1">
+          <button type="button" class="btn btn-sm btn-primary" @click="applyFilters">
+            Apply
           </button>
-          <button
-            type="button"
-            class="btn btn-outline-secondary"
-            :disabled="pageIndex + 1 >= totalPages || loading"
-            @click="nextPage"
-          >
-            Next
+          <button type="button" class="btn btn-sm btn-outline-secondary" @click="clearFilters">
+            Clear
           </button>
         </div>
       </div>
-    </div>
+    </section>
 
-    <p v-if="statusMessage" class="status-text mt-2">
+    <section class="tx-panel">
+      <header class="tx-panel__header">
+        <div>
+          <h3 class="tx-panel__title mb-0">Activity</h3>
+          <p class="tx-panel__meta mb-0">{{ pageLabel }}</p>
+        </div>
+      </header>
+
+      <LoadingView v-if="loading" class="tx-panel__loading" message="Loading transactions…" />
+
+      <div v-else-if="!totalCount" class="tx-empty">
+        <p class="tx-empty__title mb-1">No transactions match</p>
+        <p class="tx-empty__muted mb-0">
+          Add a transaction, import a CSV, or clear filters to see activity.
+        </p>
+      </div>
+
+      <template v-else>
+        <div class="tx-table-scroll">
+          <table class="tx-table table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th scope="col">When</th>
+                <th scope="col">Details</th>
+                <th scope="col">Type</th>
+                <th scope="col" class="text-end">Amount</th>
+                <th scope="col">Receipts</th>
+                <th scope="col" class="text-end"> </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tx in pageRows" :key="tx.id">
+                <td class="tx-table__date">
+                  <time :datetime="tx.date">{{ formatTxDate(tx.date) }}</time>
+                </td>
+                <td class="tx-table__details">
+                  <span class="tx-table__title">{{ txTitle(tx) }}</span>
+                  <span v-if="tx.merchant && tx.description" class="tx-table__sub">
+                    {{ tx.merchant }}
+                  </span>
+                </td>
+                <td>
+                  <span class="tx-kind" :class="txKindClass(tx)">{{ txKindLabel(tx) }}</span>
+                </td>
+                <td class="tx-table__amount text-end">
+                  {{ formatAmount(tx.amount) }}
+                </td>
+                <td class="tx-table__receipts">
+                  <div class="tx-receipt-actions">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="attachReceipt(tx)"
+                    >
+                      Attach
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="loadReceipts(tx)"
+                    >
+                      View
+                    </button>
+                  </div>
+                  <div
+                    v-if="receiptMap[tx.id]?.length"
+                    class="tx-receipt-pills"
+                  >
+                    <button
+                      v-for="r in receiptMap[tx.id]"
+                      :key="r.id"
+                      type="button"
+                      class="tx-receipt-pill"
+                      :class="{ 'tx-receipt-pill--mismatch': isMismatched(r) }"
+                      @click="openReceipt(r)"
+                    >
+                      {{ new Date(r.uploadedAt).toLocaleDateString() }}
+                    </button>
+                  </div>
+                </td>
+                <td class="text-end">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-danger"
+                    @click="removeTransaction(tx)"
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <footer class="tx-panel__footer">
+          <span class="small text-muted">{{ pageLabel }}</span>
+          <div class="btn-group btn-group-sm">
+            <button
+              type="button"
+              class="btn btn-outline-secondary"
+              :disabled="pageIndex <= 0 || loading"
+              @click="prevPage"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              class="btn btn-outline-secondary"
+              :disabled="pageIndex + 1 >= totalPages || loading"
+              @click="nextPage"
+            >
+              Next
+            </button>
+          </div>
+        </footer>
+      </template>
+    </section>
+
+    <p v-if="statusMessage" class="status-text mt-2 mb-0">
       {{ statusMessage }}
     </p>
   </div>

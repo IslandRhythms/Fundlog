@@ -59,6 +59,8 @@ export interface BudgetSubcategory {
   spreadStartMonth: string | null;
   /** Day of month the bill is due (1–31); optional, for upcoming-dues UI. */
   dueDay: number | null;
+  /** Explicit next due date (YYYY-MM-DD); rolls forward by spreadMonths after it passes. */
+  nextDueDate: string | null;
   sortOrder: number;
 }
 
