@@ -18,6 +18,7 @@ import { computeCategoryImpact } from '../shared/categoryImpact';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
 import { calendarMonthNow, localDateIso } from '../shared/calendarMonth';
+import { confirmAction } from '../shared/confirmAction';
 import { monthlyPortion, spreadMonthsLabel } from '../shared/monthSpread';
 import { nextDueDateForSub, upcomingDuesFromSubs } from '../shared/recurringDue';
 import type { BudgetCategory, BudgetSubcategory, Profile, Transaction } from '../shared/types';
@@ -59,6 +60,8 @@ const newMaxAmount = ref<number | null>(null);
 const newSpreadMonths = ref(1);
 const newSpreadStartMonth = ref(viewingMonth.value);
 const newNextDueDate = ref('');
+/** When true, fixed line is split across multiple months (spreadMonths > 1). */
+const isRecurring = ref(false);
 
 const activeProfile = computed<Profile | null>(() => {
   const id = domain.activeProfileId;
@@ -301,6 +304,7 @@ function resetSubForm() {
   newSpreadMonths.value = 1;
   newSpreadStartMonth.value = viewingMonth.value;
   newNextDueDate.value = '';
+  isRecurring.value = false;
 }
 
 function cancelSubForm() {
@@ -362,14 +366,29 @@ function startEditSub(sub: BudgetSubcategory) {
   newMinAmount.value = sub.minAmount ?? null;
   newMaxAmount.value = sub.maxAmount ?? null;
   newSpreadMonths.value = Math.max(1, sub.spreadMonths ?? 1);
+  isRecurring.value = newSpreadMonths.value > 1;
   newSpreadStartMonth.value = sub.spreadStartMonth ?? viewingMonth.value;
   newNextDueDate.value =
     nextDueDateForSub(sub, localDateIso()) ?? sub.nextDueDate ?? '';
 }
 
+function onRecurringToggle() {
+  if (isRecurring.value && newSpreadMonths.value <= 1) {
+    newSpreadMonths.value = 12;
+    if (!newSpreadStartMonth.value) {
+      newSpreadStartMonth.value = viewingMonth.value;
+    }
+  }
+}
+
+function effectiveSpreadMonths(): number {
+  if (newType.value !== 'fixed' || !isRecurring.value) return 1;
+  return Math.max(2, Math.floor(newSpreadMonths.value || 2));
+}
+
 async function submitEditSubcategory(category: BudgetCategory) {
   if (!activeBudget.value || !editingSubId.value || !newLabel.value.trim()) return;
-  const spreadMonths = Math.max(1, Math.floor(newSpreadMonths.value || 1));
+  const spreadMonths = effectiveSpreadMonths();
   const result = await window.fundlog.subcategory.update({
     id: editingSubId.value,
     budgetId: activeBudget.value.id,
@@ -391,7 +410,10 @@ async function submitEditSubcategory(category: BudgetCategory) {
 
 async function deleteSubcategoryItem(sub: BudgetSubcategory) {
   if (!activeBudget.value) return;
-  if (!window.confirm(`Remove "${sub.label}" from this budget?`)) return;
+  const ok = await confirmAction(`Remove "${sub.label}" from this budget?`, {
+    title: 'Remove expense',
+  });
+  if (!ok) return;
   const result = await window.fundlog.subcategory.delete({
     id: sub.id,
     budgetId: activeBudget.value.id,
@@ -458,14 +480,14 @@ function dueDayFromNextDueInput(value: string): number | null {
 
 function previewMonthlyFromForm(): number | null {
   if (newType.value === 'fixed' && newTargetAmount.value != null && newTargetAmount.value > 0) {
-    return monthlyPortion(newTargetAmount.value, newSpreadMonths.value);
+    return monthlyPortion(newTargetAmount.value, effectiveSpreadMonths());
   }
   return null;
 }
 
 async function submitSubcategory(category: BudgetCategory) {
   if (!activeBudget.value || !newLabel.value.trim()) return;
-  const spreadMonths = Math.max(1, Math.floor(newSpreadMonths.value || 1));
+  const spreadMonths = effectiveSpreadMonths();
   const result = await window.fundlog.subcategory.create({
     budgetId: activeBudget.value.id,
     parentCategoryId: category.id,
@@ -895,20 +917,38 @@ async function submitSubcategory(category: BudgetCategory) {
                           />
                         </label>
                       </div>
-                      <div v-if="newType === 'fixed'">
+                      <div v-if="newType === 'fixed'" class="category-line-form__full">
+                        <div class="form-check">
+                          <input
+                            id="edit-sub-recurring"
+                            v-model="isRecurring"
+                            class="form-check-input"
+                            type="checkbox"
+                            @change="onRecurringToggle"
+                          />
+                          <label class="form-check-label" for="edit-sub-recurring">
+                            Recurring / multi-month
+                          </label>
+                        </div>
+                        <p class="form-text small mb-0">
+                          Unchecked = monthly amount. Checked = split a total across
+                          several months.
+                        </p>
+                      </div>
+                      <div v-if="newType === 'fixed' && isRecurring">
                         <label class="form-label">
                           Every (mo)
                           <input
                             v-model.number="newSpreadMonths"
                             type="number"
-                            min="1"
+                            min="2"
                             max="60"
                             class="form-control form-control-sm"
                           />
                         </label>
                       </div>
                       <div
-                        v-if="newType === 'fixed' && newSpreadMonths > 1"
+                        v-if="newType === 'fixed' && isRecurring"
                         class="category-line-form__full"
                       >
                         <label class="form-label">
@@ -920,7 +960,7 @@ async function submitSubcategory(category: BudgetCategory) {
                           />
                         </label>
                         <p class="form-text small mb-0">
-                          Total is split across each {{ newSpreadMonths }}-month
+                          Total is split across each {{ effectiveSpreadMonths() }}-month
                           cycle and renews.
                         </p>
                       </div>
@@ -935,7 +975,8 @@ async function submitSubcategory(category: BudgetCategory) {
                         </label>
                         <p class="form-text small mb-0">
                           Set or change the next due date for this bill. After it
-                          passes, it advances by the Every (mo) interval. Leave
+                          passes, it advances by the
+                          {{ isRecurring ? 'Every (mo)' : 'monthly' }} interval. Leave
                           blank if none.
                         </p>
                       </div>
@@ -1041,22 +1082,40 @@ async function submitSubcategory(category: BudgetCategory) {
                       />
                     </label>
                   </div>
-                  <div v-if="newType === 'fixed'">
+                  <div v-if="newType === 'fixed'" class="category-line-form__full">
+                    <div class="form-check">
+                      <input
+                        id="add-sub-recurring"
+                        v-model="isRecurring"
+                        class="form-check-input"
+                        type="checkbox"
+                        @change="onRecurringToggle"
+                      />
+                      <label class="form-check-label" for="add-sub-recurring">
+                        Recurring / multi-month
+                      </label>
+                    </div>
+                    <p class="form-text small mb-0">
+                      Unchecked = monthly amount. Checked = split a total across
+                      several months.
+                    </p>
+                  </div>
+                  <div v-if="newType === 'fixed' && isRecurring">
                     <label class="form-label">
                       Every (mo)
                       <input
                         v-model.number="newSpreadMonths"
                         type="number"
-                        min="1"
+                        min="2"
                         max="60"
                         step="1"
                         class="form-control form-control-sm"
-                        placeholder="1"
+                        placeholder="12"
                       />
                     </label>
                   </div>
                   <div
-                    v-if="newType === 'fixed' && newSpreadMonths > 1"
+                    v-if="newType === 'fixed' && isRecurring"
                     class="category-line-form__full"
                   >
                     <label class="form-label">
@@ -1068,7 +1127,7 @@ async function submitSubcategory(category: BudgetCategory) {
                       />
                     </label>
                     <p class="form-text small mb-0">
-                      Total is split across each {{ newSpreadMonths }}-month
+                      Total is split across each {{ effectiveSpreadMonths() }}-month
                       cycle and renews.
                     </p>
                   </div>
@@ -1082,13 +1141,12 @@ async function submitSubcategory(category: BudgetCategory) {
                       />
                     </label>
                     <p class="form-text small mb-0">
-                      Set or change the next due date for this bill. After it
-                      passes, it advances by the Every (mo) interval. Leave
-                      blank if none.
+                      Optional. After it passes, advances by the
+                      {{ isRecurring ? 'Every (mo)' : 'monthly' }} interval.
                     </p>
                   </div>
                   <div
-                    v-if="newType === 'fixed' && previewMonthlyFromForm() != null && newSpreadMonths > 1"
+                    v-if="newType === 'fixed' && previewMonthlyFromForm() != null && isRecurring"
                     class="category-line-form__full"
                   >
                     <p class="small expense-monthly-impact mb-0">

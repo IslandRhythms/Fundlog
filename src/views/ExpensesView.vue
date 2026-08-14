@@ -14,6 +14,7 @@ import { useDomainStore } from '../stores/domain';
 import { hideBsModal, showBsModal } from '../shared/hideBsModal';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { calendarMonthNow, localDateIso } from '../shared/calendarMonth';
+import { confirmAction } from '../shared/confirmAction';
 import { monthlyPortion } from '../shared/monthSpread';
 import {
   computePlannedExpenseBarSegments,
@@ -543,7 +544,10 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
     kind === 'purchase'
       ? tx.description || 'this purchase'
       : tx.description || 'this unexpected expense';
-  if (!confirm(`Remove ${entryLabel}?`)) return;
+  const ok = await confirmAction(`Remove ${entryLabel}?`, {
+    title: kind === 'purchase' ? 'Remove purchase' : 'Remove unexpected expense',
+  });
+  if (!ok) return;
   try {
     await window.fundlog.transaction.delete({
       id: tx.id,

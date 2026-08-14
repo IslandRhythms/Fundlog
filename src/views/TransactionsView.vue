@@ -7,6 +7,7 @@ import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
 import { formatMoney as formatMoneyExact } from '../shared/formatMoney';
 import { localDateIso } from '../shared/calendarMonth';
+import { confirmAction } from '../shared/confirmAction';
 import type {
   BudgetCategory,
   BudgetSubcategory,
@@ -330,7 +331,8 @@ async function openReceipt(receipt: Receipt) {
 async function removeTransaction(tx: Transaction) {
   if (!domain.activeProfileId) return;
   const label = tx.description || tx.merchant || `transaction on ${tx.date}`;
-  if (!confirm(`Remove ${label}?`)) return;
+  const ok = await confirmAction(`Remove ${label}?`, { title: 'Remove transaction' });
+  if (!ok) return;
   try {
     await window.fundlog.transaction.delete({
       id: tx.id,

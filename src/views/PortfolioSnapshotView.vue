@@ -5,6 +5,7 @@ import LoadingView from '../components/LoadingView.vue';
 import PortfolioValueLineChart from '../components/PortfolioValueLineChart.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal, showBsModal } from '../shared/hideBsModal';
+import { confirmAction } from '../shared/confirmAction';
 import { formatMoney, formatPercent } from '../shared/formatMoney';
 import { errorMessageFromUnknown } from '../shared/errors';
 import {
@@ -205,7 +206,10 @@ async function submitAccount() {
 
 async function removeAccount(id: number) {
   if (!activeProfileId.value) return;
-  if (!confirm('Delete this account and all its value history?')) return;
+  const ok = await confirmAction('Delete this account and all its value history?', {
+    title: 'Remove account',
+  });
+  if (!ok) return;
   try {
     await window.fundlog.portfolio.delete({
       id,
@@ -277,7 +281,10 @@ async function submitEditSnapshot() {
 
 async function removeSnapshot(snapshotId: number, accountId: number) {
   if (!activeProfileId.value) return;
-  if (!confirm('Delete this value entry?')) return;
+  const ok = await confirmAction('Delete this value entry?', {
+    title: 'Remove entry',
+  });
+  if (!ok) return;
   try {
     await window.fundlog.portfolio.snapshotDelete({
       id: snapshotId,

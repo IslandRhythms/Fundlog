@@ -4,6 +4,7 @@ import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
+import { confirmAction } from '../shared/confirmAction';
 import type { CreditCard, CreditCardPerk } from '../shared/types';
 
 const domain = useDomainStore();
@@ -150,7 +151,10 @@ async function submitCard() {
 }
 
 async function removeCard(id: number) {
-  if (!confirm('Delete this card and all its perks?')) return;
+  const ok = await confirmAction('Delete this card and all its perks?', {
+    title: 'Remove card',
+  });
+  if (!ok) return;
   try {
     await window.fundlog.card.delete(id);
     toast.success('Card removed.');
@@ -193,7 +197,8 @@ async function submitPerk() {
 }
 
 async function removePerk(perkId: number) {
-  if (!confirm('Delete this perk?')) return;
+  const ok = await confirmAction('Delete this perk?', { title: 'Remove perk' });
+  if (!ok) return;
   try {
     await window.fundlog.card.perkDelete(perkId);
     toast.success('Perk removed.');
