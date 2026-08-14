@@ -185,27 +185,6 @@ ipcMain.handle('database:pickPathOpen', async (event) => {
 });
 
 ipcMain.handle(
-  'dialog:confirm',
-  async (
-    event,
-    args: { message: string; title?: string; detail?: string },
-  ): Promise<boolean> => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    const result = await dialog.showMessageBox(win ?? undefined, {
-      type: 'question',
-      buttons: ['Cancel', 'OK'],
-      defaultId: 1,
-      cancelId: 0,
-      noLink: true,
-      title: args.title?.trim() || 'Confirm',
-      message: args.message,
-      detail: args.detail?.trim() || undefined,
-    });
-    return result.response === 1;
-  },
-);
-
-ipcMain.handle(
   'database:setLocation',
   (
     _event,

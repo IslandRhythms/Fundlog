@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/assets/logo-and-title.png" alt="Fundlog" width="280" />
+</p>
+
 ## Fundlog
 
 Fundlog is a desktop application built with Electron, Vite, and Vue 3 for tracking and visualising funding- or finance-related data. It uses SQLite (via `better-sqlite3`) for fast local storage and `chart.js` / `vue-chartjs` for interactive charts.

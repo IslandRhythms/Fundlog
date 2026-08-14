@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'vue-toastification';
+import ConfirmDialog from './components/ConfirmDialog.vue';
 import { useUiStore } from './stores/ui';
 import logoAndTitleUrl from './assets/logo-and-title.png';
 
@@ -179,4 +180,5 @@ async function exportBackupNow() {
       </main>
     </div>
   </div>
+  <ConfirmDialog />
 </template>

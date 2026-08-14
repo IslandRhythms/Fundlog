@@ -319,13 +319,6 @@ interface Window {
       }): Promise<import('./shared/types').Receipt | null>;
       openFile(filePath: string): Promise<void>;
     };
-    dialog: {
-      confirm(input: {
-        message: string;
-        title?: string;
-        detail?: string;
-      }): Promise<boolean>;
-    };
   };
 }
 

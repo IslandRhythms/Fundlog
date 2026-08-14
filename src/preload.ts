@@ -365,13 +365,6 @@ export const api = {
     openFile: async (filePath: string): Promise<void> =>
       ipcRenderer.invoke('receipt:openFile', { filePath }),
   },
-  dialog: {
-    confirm: async (input: {
-      message: string;
-      title?: string;
-      detail?: string;
-    }): Promise<boolean> => ipcRenderer.invoke('dialog:confirm', input),
-  },
 };
 
 contextBridge.exposeInMainWorld('fundlog', api);
