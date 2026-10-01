@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
-import LoadingView from '../components/LoadingView.vue';
+import LoadingView from './LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import {
   computeBudgetMonthPerformance,
@@ -11,7 +11,7 @@ import {
 } from '../shared/budgetMonthHistory';
 import { calendarMonthNow } from '../shared/calendarMonth';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
-import type { Budget, BudgetSubcategory, Profile, Transaction } from '../shared/types';
+import type { BudgetSubcategory, Profile, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
 
@@ -119,9 +119,7 @@ watch(
   { immediate: true },
 );
 
-onMounted(async () => {
-  await domain.loadProfiles();
-  await domain.loadBudgets();
+onMounted(() => {
   if (selectedBudgetId.value == null) {
     selectedBudgetId.value =
       domain.activeBudgetId ??
@@ -133,29 +131,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="view view-budget-history budget-history-view container-fluid">
-    <p class="view-page-eyebrow mb-1">Archive</p>
-    <h2 class="mb-2">Budget History</h2>
-    <p class="view-subtitle mb-4">
-      Month-by-month performance for each budget — how planned spending, purchases, unexpected
-      costs, and goal savings compared to that month’s effective income. Unlike
-      <RouterLink to="/budget-records">Budget Records</RouterLink>, this is per calendar month,
-      not lifetime totals.
+  <div class="budget-history-view">
+    <p class="small text-muted mb-3">
+      How planned spending, purchases, unexpected costs, and goal savings compared to each
+      completed month’s effective income.
     </p>
 
-    <p v-if="!domain.activeProfileId" class="status-text">
-      Create a profile in Settings first.
-    </p>
-
-    <template v-else-if="!profileBudgets.length">
-      <div class="budget-history-empty-hint">
-        <p class="budget-history-empty-title">No budgets yet</p>
-        <p class="budget-history-empty-muted mb-0">
-          Create a budget on <strong>Budgets</strong> to see monthly performance here after your
-          first completed month.
-        </p>
-      </div>
-    </template>
+    <div v-if="!profileBudgets.length" class="budget-history-empty-hint">
+      <p class="budget-history-empty-title">No budgets yet</p>
+      <p class="budget-history-empty-muted mb-0">
+        Create a budget to see monthly performance here after your first completed month.
+      </p>
+    </div>
 
     <template v-else>
       <div class="budget-history-toolbar mb-3">

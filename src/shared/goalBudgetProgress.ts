@@ -45,8 +45,39 @@ export function goalProgressPctWithBudget(
   savedRecorded: number,
   allocations: GoalAllocation[],
   subcategories: BudgetSubcategory[],
+  leftoverApplied = 0,
 ): number {
   if (g.targetAmount <= 0) return 0;
-  const eff = effectiveProgressTowardTarget(g, savedRecorded, allocations, subcategories);
+  const eff =
+    effectiveProgressTowardTarget(g, savedRecorded, allocations, subcategories) + leftoverApplied;
   return Math.min(100, (eff / g.targetAmount) * 100);
+}
+
+/**
+ * Hand last month's positive leftover to goals by priority (highest first, newest breaks
+ * ties), filling each goal's gap after recorded savings and this month's linked plan.
+ */
+export function allocateLeftoverToGoals(
+  goals: Goal[],
+  leftover: number,
+  savedFor: (goalId: number) => number,
+  allocations: GoalAllocation[],
+  subcategories: BudgetSubcategory[],
+): Record<number, number> {
+  const applied: Record<number, number> = {};
+  let pool = Math.max(0, leftover);
+  const ordered = [...goals].sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return b.createdAt.localeCompare(a.createdAt);
+  });
+  for (const g of ordered) {
+    if (pool <= 0) break;
+    const progress = effectiveProgressTowardTarget(g, savedFor(g.id), allocations, subcategories);
+    const share = Math.min(pool, Math.max(0, g.targetAmount - progress));
+    if (share > 0) {
+      applied[g.id] = share;
+      pool -= share;
+    }
+  }
+  return applied;
 }

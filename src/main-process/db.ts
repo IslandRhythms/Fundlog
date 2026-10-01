@@ -4,7 +4,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readAppPrefs } from './app-prefs';
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 13;
 
 let db: Database.Database | null = null;
 
@@ -434,6 +434,50 @@ function runMigrations() {
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
       )
       .run(11, now);
+  }
+
+  if (current < 12 && SCHEMA_VERSION >= 12) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      CREATE TABLE financial_milestones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        category TEXT,
+        target_date TEXT,
+        note TEXT,
+        achieved_date TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX idx_financial_milestones_profile
+        ON financial_milestones(profile_id);
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(12, now);
+  }
+
+  if (current < 13 && SCHEMA_VERSION >= 13) {
+    const now = new Date().toISOString();
+    dbInstance.exec(`
+      CREATE TABLE retirement_plans (
+        profile_id INTEGER PRIMARY KEY,
+        inputs_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+    `);
+    dbInstance
+      .prepare(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+      )
+      .run(13, now);
   }
 }
 

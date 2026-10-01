@@ -5,6 +5,7 @@ import { useToast } from 'vue-toastification';
 import LoadingView from '../components/LoadingView.vue';
 import MoneyLeftSummary from '../components/MoneyLeftSummary.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
+import PageTabs from '../components/PageTabs.vue';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import UnexpectedExpensesBarChart from '../components/UnexpectedExpensesBarChart.vue';
 import VendorPicker from '../components/VendorPicker.vue';
@@ -23,11 +24,19 @@ import {
 } from '../shared/plannedExpenseBar';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
 import { FUND_COLORS } from '../shared/fundColors';
-import type { BudgetCategory, BudgetSubcategory, Goal, Profile, Transaction } from '../shared/types';
+import type { BudgetCategory, BudgetSubcategory, Profile, Transaction } from '../shared/types';
 
 const domain = useDomainStore();
 const toast = useToast();
 const route = useRoute();
+
+type ExpensesTab = 'activity' | 'month' | 'breakdown';
+const EXPENSES_TABS: { key: ExpensesTab; label: string }[] = [
+  { key: 'activity', label: 'Activity' },
+  { key: 'month', label: 'This month' },
+  { key: 'breakdown', label: 'Breakdown' },
+];
+const expensesTab = ref<ExpensesTab>('activity');
 const router = useRouter();
 
 const loading = ref(false);
@@ -108,6 +117,10 @@ function txMonthImpact(tx: Transaction) {
 
 function txCategoryColor(tx: Transaction, fallback: string) {
   return parentCategoryForSubcategory(tx.subcategoryId)?.color ?? fallback;
+}
+
+function txCategoryLabel(tx: Transaction) {
+  return parentCategoryForSubcategory(tx.subcategoryId)?.label ?? '';
 }
 
 async function loadData() {
@@ -211,9 +224,16 @@ const purchasesThisMonth = computed(() =>
   purchases.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth.value) > 0),
 );
 
-const recentPurchases = computed(() =>
-  purchasesThisMonth.value.filter(matchesActivitySearch).slice(0, 10),
-);
+/** Full lists live on Transactions; a search still shows every match. */
+const RECENT_LIMIT = 5;
+
+const isSearching = computed(() => activitySearch.value.trim() !== '');
+
+function recentOrMatches(list: Transaction[]): Transaction[] {
+  return isSearching.value ? list.filter(matchesActivitySearch) : list.slice(0, RECENT_LIMIT);
+}
+
+const recentPurchases = computed(() => recentOrMatches(purchasesThisMonth.value));
 
 const unexpectedThisMonth = computed(() =>
   unexpected.value.filter((tx) => transactionMonthlyImpact(tx, viewingMonth.value) > 0),
@@ -279,9 +299,7 @@ const unexpectedBarSegments = computed(() => {
   return rows;
 });
 
-const recentUnexpected = computed(() =>
-  unexpectedThisMonth.value.filter(matchesActivitySearch).slice(0, 10),
-);
+const recentUnexpected = computed(() => recentOrMatches(unexpectedThisMonth.value));
 
 const baseBudgetIncome = computed(() => activeBudget.value?.monthlyIncome ?? 0);
 
@@ -299,14 +317,6 @@ const unexpectedPercent = computed(() => {
   return Math.min(100, (totalUnexpected.value / budgetIncome.value) * 100);
 });
 
-const goalById = computed(() => {
-  const m = new Map<number, Goal>();
-  for (const g of domain.goals) {
-    m.set(g.id, g);
-  }
-  return m;
-});
-
 const totalGoalSavingsRecorded = computed(() =>
   goalContributions.value.reduce(
     (sum, tx) => sum + transactionMonthlyImpact(tx, viewingMonth.value),
@@ -318,16 +328,6 @@ const goalSavingsPercent = computed(() => {
   if (!budgetIncome.value || !totalGoalSavingsRecorded.value) return 0;
   return Math.min(100, (totalGoalSavingsRecorded.value / budgetIncome.value) * 100);
 });
-
-const goalContributionsThisMonth = computed(() =>
-  goalContributions.value.filter(
-    (tx) => transactionMonthlyImpact(tx, viewingMonth.value) > 0,
-  ),
-);
-
-const recentGoalContributions = computed(() =>
-  goalContributionsThisMonth.value.slice(0, 10),
-);
 
 const plannedAmount = (sub: BudgetSubcategory) =>
   plannedAmountFromSub(sub, viewingMonth.value);
@@ -447,12 +447,12 @@ const uncommittedPool = computed(
 onMounted(async () => {
   await domain.loadProfiles();
   await domain.loadBudgets();
-  await domain.loadGoals();
   await loadData();
   const log = route.query.log;
   if (log === 'purchase' || log === 'unexpected') {
     await router.replace({ query: {} });
     await nextTick();
+    expensesTab.value = 'activity';
     showBsModal(log === 'purchase' ? 'addPurchaseModal' : 'addUnexpectedModal');
   }
 });
@@ -570,7 +570,7 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
       Log <strong>purchases</strong> against budget line items and track
       <strong>unexpected</strong> spending on its own. Summary percentages use your active
       budget’s effective income for <strong>{{ monthLabel }}</strong> — see
-      <RouterLink to="/extra-income">Extra income</RouterLink> for one-off bumps.
+      <RouterLink to="/budgets?extraIncome=1">Extra income</RouterLink> for one-off bumps.
     </p>
 
     <p v-if="!activeBudget" class="status-text">
@@ -614,8 +614,15 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
         </RouterLink>
       </div>
 
+      <PageTabs
+        v-model="expensesTab"
+        :tabs="EXPENSES_TABS"
+        storage-key="expenses"
+        label="Expenses sections"
+      />
+
       <div class="row g-3">
-        <div class="col-12">
+        <div v-if="expensesTab === 'month'" class="col-12">
           <CollapsibleSection
             title="What's left"
             :meta="headroom.spendingTiers.memorableLine ?? monthLabel"
@@ -632,7 +639,7 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
           </CollapsibleSection>
         </div>
 
-        <div class="col-12">
+        <div v-if="expensesTab === 'month'" class="col-12">
           <section class="expenses-snapshot expenses-panel">
             <header class="expenses-snapshot__header">
               <div>
@@ -688,7 +695,7 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
           </section>
         </div>
 
-        <div class="col-12">
+        <div v-if="expensesTab === 'breakdown'" class="col-12">
           <CollapsibleSection
             class="expenses-panel expenses-panel--impact"
             title="Budget impact by category"
@@ -711,7 +718,7 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
           </CollapsibleSection>
         </div>
 
-        <div class="col-12">
+        <div v-if="expensesTab === 'breakdown'" class="col-12">
           <CollapsibleSection
             class="expenses-panel expenses-panel--vendor"
             title="Where it goes by vendor"
@@ -786,7 +793,7 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
           </CollapsibleSection>
         </div>
 
-        <div class="col-12">
+        <div v-if="expensesTab === 'activity'" class="col-12">
           <label class="form-label visually-hidden" for="expensesActivitySearch">
             Search activity
           </label>
@@ -800,7 +807,7 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
           />
         </div>
 
-        <div class="col-12 col-lg-6">
+        <div v-if="expensesTab === 'activity'" class="col-12 col-lg-6">
           <CollapsibleSection
             class="expenses-panel expenses-panel--purchase"
             title="Purchases"
@@ -831,8 +838,8 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
                   </span>
                   <span class="expense-activity-item__meta">
                     {{ tx.date }}
-                    <span v-if="tx.subcategoryId != null && subcategoryById[tx.subcategoryId]">
-                      · {{ subcategoryById[tx.subcategoryId].label }}
+                    <span v-if="txCategoryLabel(tx)">
+                      · {{ txCategoryLabel(tx) }}
                     </span>
                     <span v-if="tx.merchant" class="expense-activity-item__vendor">
                       · {{ tx.merchant }}
@@ -857,13 +864,22 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
                 </button>
               </li>
             </ul>
+            <p v-else-if="isSearching && purchasesThisMonth.length" class="expenses-panel__empty small mb-0">
+              No purchases match your search.
+            </p>
             <p v-else class="expenses-panel__empty small mb-0">
               No purchases this month. Use <strong>Log purchase</strong> above.
+            </p>
+            <p v-if="!isSearching && purchasesThisMonth.length" class="small text-muted mt-2 mb-0">
+              <template v-if="purchasesThisMonth.length > RECENT_LIMIT">
+                Showing {{ RECENT_LIMIT }} most recent of {{ purchasesThisMonth.length }} ·
+              </template>
+              <RouterLink to="/transactions">See all in Transactions</RouterLink>
             </p>
           </CollapsibleSection>
         </div>
 
-        <div class="col-12 col-lg-6">
+        <div v-if="expensesTab === 'activity'" class="col-12 col-lg-6">
           <CollapsibleSection
             class="expenses-panel expenses-panel--unexpected"
             title="Unexpected expenses"
@@ -952,61 +968,14 @@ async function removeExpense(tx: Transaction, kind: 'purchase' | 'unexpected') {
                 </button>
               </li>
             </ul>
-          </CollapsibleSection>
-        </div>
-
-        <div class="col-12">
-          <CollapsibleSection
-            class="expenses-panel expenses-panel--goals"
-            title="Goal savings"
-            :meta="
-              goalContributionsThisMonth.length
-                ? `${goalContributionsThisMonth.length} this month · ${formatMoney(totalGoalSavingsRecorded)}`
-                : 'None this month'
-            "
-            :default-expanded="false"
-            storage-key="expenses-goal-savings"
-          >
-            <p class="expenses-panel__intro small text-muted mb-3">
-              Amounts from <strong>Record savings</strong> on the Goals page.
+            <p v-else-if="isSearching && unexpectedThisMonth.length" class="expenses-panel__empty small mb-0">
+              No unexpected expenses match your search.
             </p>
-            <ul
-              v-if="recentGoalContributions.length"
-              class="expense-activity-list list-unstyled mb-0"
-            >
-              <li
-                v-for="tx in recentGoalContributions"
-                :key="tx.id"
-                class="expense-activity-item"
-              >
-                <span
-                  class="expense-activity-item__swatch"
-                  :style="{ background: FUND_COLORS.goalSavings }"
-                />
-                <div class="expense-activity-item__main">
-                  <span class="expense-activity-item__title">
-                    {{ tx.description || 'Goal savings' }}
-                  </span>
-                  <span class="expense-activity-item__meta">
-                    {{ tx.date }}
-                    <span v-if="tx.goalId != null && goalById.get(tx.goalId)">
-                      · {{ goalById.get(tx.goalId)!.name }}
-                    </span>
-                  </span>
-                </div>
-                <div class="expense-activity-item__amounts">
-                  <span class="expense-activity-item__total">{{ formatMoney(tx.amount) }}</span>
-                  <span
-                    v-if="Math.abs(txMonthImpact(tx) - tx.amount) > 0.009"
-                    class="expense-activity-item__impact"
-                  >
-                    {{ formatMoney(txMonthImpact(tx)) }}/mo
-                  </span>
-                </div>
-              </li>
-            </ul>
-            <p v-else class="expenses-panel__empty small mb-0">
-              No goal savings recorded on this budget yet.
+            <p v-if="!isSearching && unexpectedThisMonth.length" class="small text-muted mt-2 mb-0">
+              <template v-if="unexpectedThisMonth.length > RECENT_LIMIT">
+                Showing {{ RECENT_LIMIT }} most recent of {{ unexpectedThisMonth.length }} ·
+              </template>
+              <RouterLink to="/transactions">See all in Transactions</RouterLink>
             </p>
           </CollapsibleSection>
         </div>

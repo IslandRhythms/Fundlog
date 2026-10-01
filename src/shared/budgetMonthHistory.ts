@@ -45,6 +45,14 @@ export function historicalMonthsForBudget(budget: Budget, nowMonth = calendarMon
   return monthsBetween(budget.startMonth, endMonth);
 }
 
+/** The calendar month before `nowMonth`, or null when the budget wasn't running then. */
+export function previousMonthForBudget(budget: Budget, nowMonth = calendarMonthNow()): string | null {
+  const prev = addCalendarMonths(nowMonth, -1);
+  if (prev < budget.startMonth) return null;
+  if (budget.endMonth && budget.endMonth < prev) return null;
+  return prev;
+}
+
 export function formatCalendarMonthLabel(month: string): string {
   const [y, m] = month.split('-').map(Number);
   const d = new Date(y, m - 1, 1);

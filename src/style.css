@@ -1245,12 +1245,6 @@ html {
   border-color: var(--card-border);
 }
 
-[data-theme='dark'] .expense-spread-badge {
-  color: var(--accent);
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-
 [data-theme='dark'] .expense-monthly-impact {
   color: color-mix(in srgb, var(--accent) 75%, #e2e8f0);
 }
@@ -1395,16 +1389,6 @@ html {
   color: var(--accent);
 }
 
-.expense-type-badge {
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.2rem 0.5rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 22%, var(--card-bg));
-  color: var(--card-text);
-  border: 1px solid var(--card-border);
-}
-
 .subcategory-actions {
   display: flex;
   gap: 0.35rem;
@@ -1505,11 +1489,15 @@ html {
 
 .credit-cards-view .status-text,
 .budget-records-view .status-text,
-.portfolio-snapshot-view .status-text {
+.portfolio-snapshot-view .status-text,
+.milestones-view .status-text,
+.retirement-view .status-text {
   color: var(--status-text);
 }
 
-.portfolio-snapshot-view .portfolio-section-label {
+.portfolio-snapshot-view .portfolio-section-label,
+.milestones-view .milestones-section-label,
+.retirement-view .retirement-section-label {
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1517,30 +1505,48 @@ html {
   color: var(--muted);
 }
 
-.portfolio-snapshot-view .portfolio-account-title {
+.portfolio-snapshot-view .portfolio-account-title,
+.milestones-view .milestone-title {
   color: var(--text-h);
 }
 
-.portfolio-snapshot-view .portfolio-empty-hint {
+.portfolio-snapshot-view .portfolio-empty-hint,
+.milestones-view .milestones-empty-hint {
   border: 1px dashed var(--border);
   border-radius: 0.5rem;
   padding: 1.25rem 1rem;
 }
 
-.portfolio-snapshot-view .portfolio-empty-title {
+.portfolio-snapshot-view .portfolio-empty-title,
+.milestones-view .milestones-empty-title {
   font-weight: 600;
   margin-bottom: 0.35rem;
   color: var(--text-h);
 }
 
-.portfolio-snapshot-view .portfolio-empty-muted {
+.portfolio-snapshot-view .portfolio-empty-muted,
+.milestones-view .milestones-empty-muted {
   color: var(--muted);
   font-size: 0.875rem;
 }
 
 .portfolio-snapshot-view .portfolio-total,
-.portfolio-snapshot-view .portfolio-account-card {
+.portfolio-snapshot-view .portfolio-account-card,
+.milestones-view .milestones-card,
+.retirement-view .retirement-card {
   background: var(--card-bg);
+}
+
+/* Undo the global `.badge` pill styling so tab badges read as plain status text. */
+.retirement-view .badge {
+  border: 0;
+  font-size: 0.75em;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.milestones-view .milestone-item--achieved .milestone-title {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 /* Cards page — compact layout with clear hierarchy */
@@ -1674,80 +1680,6 @@ html {
   border-color: var(--accent-border);
 }
 
-/* Budgets page — “Your budgets” collapsible (Vue-controlled; no Bootstrap Collapse) */
-.budgets-existing-card {
-  overflow: hidden;
-}
-
-.budgets-existing-toggle {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 16px 18px;
-  margin: 0;
-  border: none;
-  border-bottom: none;
-  border-radius: 0;
-  background: color-mix(in srgb, var(--card-bg) 93%, var(--border));
-  font: inherit;
-  color: var(--card-text);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.budgets-existing-toggle--expanded {
-  border-bottom: 1px solid var(--card-border);
-}
-
-.budgets-existing-toggle:hover {
-  background: color-mix(in srgb, var(--card-bg) 85%, var(--border));
-}
-
-.budgets-existing-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  z-index: 1;
-  position: relative;
-}
-
-.budgets-existing-toggle-main {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-
-.budgets-existing-toggle-icon {
-  flex-shrink: 0;
-  display: flex;
-  color: var(--muted);
-  opacity: 0.9;
-}
-
-.budgets-existing-toggle-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-}
-
-.budgets-existing-toggle-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--card-text);
-  letter-spacing: -0.01em;
-}
-
-.budgets-existing-toggle-meta {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: color-mix(in srgb, var(--card-text) 52%, var(--muted));
-}
-
 .budgets-collapse-chevron {
   width: 9px;
   height: 9px;
@@ -1760,90 +1692,6 @@ html {
 
 .budgets-collapse-chevron--collapsed {
   transform: translateY(1px) rotate(-45deg);
-}
-
-.budgets-existing-panel {
-  border-top: none;
-}
-
-.budgets-existing-body {
-  padding-top: 16px;
-  padding-bottom: 18px;
-}
-
-.budgets-existing-empty {
-  padding: 14px 16px;
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--card-border);
-  background: color-mix(in srgb, var(--card-bg) 96%, var(--muted));
-}
-
-.budgets-existing-empty-title {
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--card-text);
-}
-
-.budgets-existing-empty-text {
-  font-size: 0.875rem;
-  line-height: 1.45;
-  color: color-mix(in srgb, var(--card-text) 55%, var(--muted));
-}
-
-.budgets-existing-empty-text strong {
-  color: var(--card-text);
-  font-weight: 600;
-}
-
-.budgets-existing-list {
-  padding-top: 2px;
-}
-
-.budgets-existing-row + .budgets-existing-row {
-  margin-top: 12px;
-}
-
-.budgets-existing-name {
-  font-weight: 600;
-  color: var(--card-text);
-}
-
-.budgets-existing-details {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.15rem 0.35rem;
-  font-size: 0.8125rem;
-  line-height: 1.4;
-  color: color-mix(in srgb, var(--card-text) 58%, var(--muted));
-}
-
-.budgets-existing-dot {
-  color: var(--muted);
-  user-select: none;
-}
-
-.budgets-existing-row-inner {
-  padding: 14px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--card-border);
-  background: color-mix(in srgb, var(--card-bg) 96%, var(--border));
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.budgets-existing-row-inner:hover {
-  border-color: color-mix(in srgb, var(--card-border) 70%, var(--accent));
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-[data-theme='dark'] .budgets-existing-row-inner {
-  background: rgba(30, 41, 59, 0.35);
-}
-
-[data-theme='dark'] .budgets-existing-row-inner:hover {
-  background: rgba(30, 41, 59, 0.5);
 }
 
 /* Budget page: money-left hero */
@@ -2819,464 +2667,236 @@ html {
   border: 1px solid var(--accent-border);
 }
 
-/* Line items — stacked collapsible category panels */
-.budget-categories {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-  min-width: 0;
-  max-width: 100%;
-}
-
 .view-budgets .collapsible-section__body {
   min-width: 0;
   overflow: visible;
 }
 
-.budget-category-panel {
-  --category-accent: var(--accent);
-  width: 100%;
+/* Budgets page tables (line items, income allocation) */
+.main .budgets-table-wrap {
   max-width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, var(--category-accent) 20%);
-  border-left: 4px solid var(--category-accent);
+  overflow-x: auto;
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
-  background: var(--card-bg);
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--category-accent) 12%, transparent),
-    var(--shadow-sm, var(--shadow));
 }
 
-.budget-category-panel--over {
-  border-color: color-mix(in srgb, var(--danger, #dc3545) 40%, var(--border));
-  border-left-color: var(--danger, #dc3545);
-}
-
-.budget-category-panel--collapsed .budget-category-panel__header {
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-}
-
-.budget-category-panel__header {
-  padding: 0;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--card-bg) 88%, var(--category-accent) 12%) 0%,
-    var(--card-bg) 100%
-  );
-}
-
-.budget-category-panel__toggle {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  grid-template-areas:
-    'identity hero chevron'
-    'identity hero chevron';
-  align-items: start;
-  gap: 0.35rem 0.65rem;
+.main .budgets-table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--card-text);
+  --bs-table-border-color: var(--card-border);
   width: 100%;
-  min-width: 0;
-  padding: 0.85rem 0.85rem 0.5rem;
-  border: none;
-  background: transparent;
-  text-align: left;
-  color: inherit;
-  cursor: pointer;
-}
-
-.budget-category-panel__toggle:hover {
-  color: inherit;
-}
-
-.budget-category-panel__toggle:focus-visible {
-  outline: 2px solid var(--category-accent);
-  outline-offset: -2px;
-}
-
-.budget-category-panel__identity {
-  grid-area: identity;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  min-width: 0;
-}
-
-.budget-category-panel__swatch {
-  width: 0.5rem;
-  align-self: stretch;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: var(--category-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--category-accent) 30%, transparent);
-}
-
-.budget-category-panel__titles {
-  min-width: 0;
-}
-
-.budget-category-panel__title {
   margin: 0;
-  font-size: 1.05rem;
-  font-weight: 750;
-  line-height: 1.2;
+  font-size: 0.8125rem;
+  color: var(--card-text);
 }
 
-.budget-category-panel__target {
-  margin: 0.2rem 0 0;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.3;
-}
-
-.budget-category-panel__hero {
-  grid-area: hero;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-.budget-category-panel__hero-value {
-  font-size: 1.15rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  color: var(--category-accent);
-}
-
-.budget-category-panel__hero--over .budget-category-panel__hero-value {
-  color: var(--danger, #dc3545);
-}
-
-.budget-category-panel__hero-label {
+.main .budgets-table thead th {
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.budget-category-panel__chevron {
-  grid-area: chevron;
-  margin-top: 0.3rem;
-  flex-shrink: 0;
-}
-
-.budget-category-panel__meter-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.85rem 0.55rem;
-}
-
-.budget-category-panel__meter {
-  flex: 1;
-  height: 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--border) 65%, transparent);
-  overflow: hidden;
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--border) 40%, transparent);
-}
-
-.budget-category-panel__meter-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 0.35s ease;
-  min-width: 0;
-  box-shadow: 0 0 8px color-mix(in srgb, var(--category-accent) 45%, transparent);
-}
-
-.budget-category-panel__meter-label {
-  flex-shrink: 0;
-  font-size: 0.72rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  min-width: 4.5rem;
-  text-align: right;
-}
-
-.budget-category-panel__strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 1.25rem;
-  padding: 0.5rem 0.85rem 0.75rem;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-}
-
-.budget-category-panel__strip strong {
-  display: block;
-  font-size: 0.88rem;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-  color: var(--card-text, inherit);
-  margin-top: 0.1rem;
-}
-
-.budget-category-panel--collapsed .budget-category-panel__strip {
-  padding-bottom: 0.85rem;
-}
-
-.budget-category-panel__extra {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.45rem;
-  padding: 0 0.85rem 0.75rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.budget-category-panel--collapsed .budget-category-panel__extra {
-  padding-bottom: 0.85rem;
-}
-
-.budget-category-panel__extra-label {
   color: var(--muted);
-  font-weight: 600;
-}
-
-.budget-category-panel__extra-purchase {
-  color: var(--fund-purchase);
-  font-weight: 600;
-}
-
-.budget-category-panel__extra-unexpected {
-  color: var(--fund-unexpected);
-  font-weight: 600;
-}
-
-.budget-category-panel__body {
-  min-width: 0;
-  max-width: 100%;
-  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  display: flex;
-  flex-direction: column;
-}
-
-.budget-line-table-wrap {
-  padding: 0 0.85rem;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.budget-line-table {
-  --bs-table-bg: transparent;
-  --bs-table-color: var(--card-text, inherit);
-  --bs-table-border-color: color-mix(in srgb, var(--border) 75%, transparent);
-  margin-bottom: 0;
-}
-
-.budget-line-table thead th {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  border-bottom: 2px solid color-mix(in srgb, var(--category-accent) 30%, var(--border));
-  padding: 0.6rem 0.65rem;
-  vertical-align: bottom;
-  background: color-mix(in srgb, var(--card-bg) 92%, var(--category-accent) 8%);
-}
-
-.budget-line-table__th-expense {
-  min-width: 11rem;
-}
-
-.budget-line-table__th-num {
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--muted) 12%);
+  border-bottom-color: var(--card-border);
   white-space: nowrap;
-  width: 7.5rem;
+  padding: 0.6rem 0.75rem;
 }
 
-.budget-line-table__th-actions {
-  width: 1%;
-  white-space: nowrap;
-  padding-right: 0.5rem !important;
-}
-
-.budget-line-table tbody td {
-  padding: 0.65rem;
+.main .budgets-table tbody th,
+.main .budgets-table tbody td,
+.main .budgets-table tfoot th,
+.main .budgets-table tfoot td {
+  padding: 0.55rem 0.75rem;
   vertical-align: middle;
 }
 
-.budget-line-table tbody tr:hover:not(.budget-line-row--form) {
-  background: color-mix(in srgb, var(--card-bg) 94%, var(--category-accent) 6%);
-}
-
-.budget-line-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.budget-line-row--form > td {
-  padding: 0.65rem;
-  background: color-mix(in srgb, var(--card-bg) 96%, var(--category-accent) 4%);
-}
-
-.budget-line-row__expense {
-  min-width: 0;
-  max-width: 28rem;
-}
-
-.budget-line-row__top {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.35rem 0.5rem;
-}
-
-.budget-line-row__name {
-  font-size: 0.9rem;
-  font-weight: 650;
-  line-height: 1.3;
-  word-break: break-word;
-}
-
-.budget-line-row__badges {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-
-.budget-line-row__note {
-  margin: 0.3rem 0 0;
-  font-size: 0.75rem;
+.main .budgets-table tbody th {
   font-weight: 600;
-  color: var(--accent);
-  line-height: 1.3;
 }
 
-.budget-line-row__planned {
-  line-height: 1.25;
-  white-space: nowrap;
+.main .budgets-table td:first-child,
+.main .budgets-table th:first-child {
+  overflow-wrap: anywhere;
 }
 
-.budget-line-row__money {
-  display: block;
-  font-size: 0.9rem;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-  color: var(--category-accent);
-}
-
-.budget-line-row__suffix {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-top: 0.1rem;
-}
-
-.budget-line-row__pct {
-  font-size: 0.875rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.budget-line-table__actions-cell {
+/* Numeric / action columns shrink to content so the name column takes the rest. */
+.main .budgets-table__num {
   width: 1%;
   white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
-.budget-line-actions {
-  display: inline-flex;
+.main .budgets-table__sub {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.main .budgets-table__zero {
+  color: var(--muted);
+}
+
+.main .budgets-table__group > * {
+  --bs-table-bg: color-mix(in srgb, var(--category-accent) 9%, var(--card-bg));
+}
+
+.main .budgets-table__group > :first-child {
+  box-shadow: inset 3px 0 0 var(--category-accent);
+}
+
+.main .budgets-table__line > td:first-child {
+  padding-left: 2.1rem;
+}
+
+.main .budgets-table__form > td {
+  --bs-table-bg: color-mix(in srgb, var(--card-bg) 94%, var(--muted) 6%);
+  padding: 0.65rem 0.75rem;
+}
+
+.main .budgets-table__empty {
+  padding-left: 2.1rem !important;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.main .budgets-table tfoot th,
+.main .budgets-table tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--card-border);
+  border-bottom: 0;
+}
+
+.budgets-table__swatch {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  flex-shrink: 0;
+}
+
+.budgets-table__meter {
+  height: 4px;
+  min-width: 5rem;
+  background: color-mix(in srgb, var(--muted) 20%, var(--card-bg));
+}
+
+/* What's left — summary + entries */
+.leftover-ledger__summary {
+  display: grid;
+  grid-template-columns: minmax(12rem, auto) minmax(0, 1fr);
+  gap: 1rem 1.5rem;
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+
+@media (max-width: 767.98px) {
+  .leftover-ledger__summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.leftover-ledger__hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.leftover-ledger__hero-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.leftover-ledger__hero-value {
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.leftover-ledger__hero-value--left {
+  color: var(--text-h);
+}
+
+.leftover-ledger__hero-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.leftover-ledger__stat {
+  height: 100%;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--card-border);
+  border-left: 3px solid var(--kind-color);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--kind-color) 6%, var(--card-bg));
+}
+
+.leftover-ledger__stat dt {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.leftover-ledger__stat dd {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--card-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.leftover-ledger__bar {
+  height: 10px;
+  background: color-mix(in srgb, var(--muted) 18%, var(--card-bg));
+}
+
+.leftover-ledger__over {
+  margin-top: 0.4rem;
+}
+
+.leftover-ledger__empty {
+  margin-top: 1rem;
+  color: var(--muted);
+}
+
+.leftover-ledger__toolbar {
+  display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.35rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin: 1.25rem 0 0.6rem;
 }
 
-.budget-line-action {
+.leftover-ledger__heading {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.leftover-ledger__filters {
+  --bs-nav-pills-link-active-bg: color-mix(in srgb, var(--accent) 16%, var(--card-bg));
+  --bs-nav-pills-link-active-color: var(--text-h);
+  --bs-nav-link-color: var(--muted);
+  --bs-nav-link-hover-color: var(--text-h);
+  --bs-nav-link-padding-x: 0.65rem;
+  --bs-nav-link-padding-y: 0.25rem;
+  --bs-nav-pills-border-radius: 999px;
+  gap: 0.25rem;
   font-size: 0.78rem;
   font-weight: 600;
-  padding: 0.3rem 0.7rem;
-  line-height: 1.2;
-  border-radius: var(--radius);
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
 }
 
-.budget-line-action--log {
-  border: 1px solid color-mix(in srgb, var(--category-accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--card-bg) 75%, var(--category-accent) 25%);
-  color: var(--category-accent);
-}
-
-.budget-line-action--log:hover {
-  background: color-mix(in srgb, var(--card-bg) 55%, var(--category-accent) 45%);
-  border-color: var(--category-accent);
-  color: var(--category-accent);
-}
-
-.budget-line-action--edit {
-  border: 1px solid var(--border);
-  background: var(--card-bg);
-  color: var(--card-text, inherit);
-}
-
-.budget-line-action--edit:hover {
-  background: color-mix(in srgb, var(--card-bg) 88%, var(--muted) 12%);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--muted));
-  color: var(--card-text, inherit);
-}
-
-.budget-line-action--remove {
-  border: 1px solid color-mix(in srgb, var(--danger, #dc3545) 35%, var(--border));
-  background: transparent;
-  color: var(--danger, #dc3545);
-}
-
-.budget-line-action--remove:hover {
-  background: color-mix(in srgb, var(--card-bg) 85%, var(--danger, #dc3545) 15%);
-  border-color: var(--danger, #dc3545);
-  color: var(--danger, #dc3545);
-}
-
-.budget-line-table__empty {
-  padding: 1rem 0.75rem !important;
-  text-align: center;
-  font-size: 0.88rem;
-  color: var(--text-muted);
-  border: none !important;
-  background: color-mix(in srgb, var(--card-bg) 96%, var(--category-accent) 4%);
-}
-
-.budget-category-panel__footer {
-  padding: 0.55rem 0.85rem 0.75rem;
-  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-}
-
-.budget-category-panel__add {
-  width: 100%;
-  font-weight: 600;
-  font-size: 0.85rem;
-  padding: 0.45rem 0.75rem;
-  border-radius: var(--radius);
-  border: 1px dashed color-mix(in srgb, var(--category-accent) 45%, var(--border));
-  color: var(--category-accent);
-  background: color-mix(in srgb, var(--card-bg) 92%, var(--category-accent) 8%);
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.budget-category-panel__add:hover {
-  background: color-mix(in srgb, var(--card-bg) 85%, var(--category-accent) 15%);
-  border-color: var(--category-accent);
-  color: var(--category-accent);
-}
-
-.budget-category-panel__add-form {
-  margin-top: 0.5rem;
-  padding: 0.6rem;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--card-bg) 98%, var(--category-accent) 2%);
-  border: 1px solid var(--border);
+.leftover-ledger__count {
+  margin-left: 0.2rem;
+  font-weight: 400;
+  opacity: 0.75;
 }
 
 .budget-line-form {
@@ -3447,10 +3067,6 @@ html {
 
 .expenses-panel--unexpected.collapsible-section {
   border-top-color: color-mix(in srgb, var(--fund-unexpected) 45%, var(--card-border));
-}
-
-.expenses-panel--goals.collapsible-section {
-  border-top-color: color-mix(in srgb, var(--fund-savings) 45%, var(--card-border));
 }
 
 .expenses-panel--vendor.collapsible-section {
@@ -3985,16 +3601,6 @@ html {
   white-space: nowrap;
 }
 
-.expense-spread-badge {
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.2rem 0.45rem;
-  border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
-}
-
 .expense-monthly-impact {
   font-size: 0.8rem;
   font-weight: 600;
@@ -4187,17 +3793,9 @@ html {
   font-weight: 600;
 }
 
-/* Budget History: month-by-month performance */
-.view-budget-history .view-page-eyebrow {
-  color: color-mix(in srgb, #0d9488 55%, var(--muted));
-}
-
+/* Budget Records → Monthly history tab */
 .budget-history-view {
   color: var(--card-text);
-}
-
-.budget-history-view h2 {
-  color: var(--text-h);
 }
 
 .budget-history-loading,

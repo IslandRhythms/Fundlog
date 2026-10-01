@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { RouterLink, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { useToast } from 'vue-toastification';
+import BudgetMonthlyHistory from '../components/BudgetMonthlyHistory.vue';
 import LoadingView from '../components/LoadingView.vue';
 import { useDomainStore } from '../stores/domain';
 import { hideBsModal } from '../shared/hideBsModal';
@@ -10,12 +11,21 @@ import type { Budget } from '../shared/types';
 const domain = useDomainStore();
 const toast = useToast();
 const router = useRouter();
+const route = useRoute();
 
 type Row = Budget & { totalSpent: number; txCount: number };
+type RecordsTab = 'budgets' | 'history';
 
 const rows = ref<Row[]>([]);
 const loading = ref(false);
-const existingBudgetsExpanded = ref(false);
+
+const activeTab = computed<RecordsTab>(() =>
+  route.query.tab === 'history' ? 'history' : 'budgets',
+);
+
+function selectTab(tab: RecordsTab) {
+  router.replace({ query: { ...route.query, tab: tab === 'history' ? 'history' : undefined } });
+}
 
 const name = ref('');
 const startMonth = ref('');
@@ -29,20 +39,7 @@ const sortedBudgets = computed(() =>
   [...domain.budgets].sort((a, b) => b.startMonth.localeCompare(a.startMonth)),
 );
 
-const budgets = computed(() =>
-  [...domain.budgets].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-);
-
 const activeBudget = computed(() => domain.activeBudget);
-
-function toggleExistingBudgets() {
-  existingBudgetsExpanded.value = !existingBudgetsExpanded.value;
-}
-
-function formatFiftyThirtyTwentyAmount(income: number, percent: number) {
-  const value = (income * percent) / 100;
-  return value.toLocaleString();
-}
 
 function openClearMonthModal() {
   const d = new Date();
@@ -129,14 +126,43 @@ function vsIncome(b: Row): string {
   <div class="view budget-records-view container-fluid">
     <p class="view-page-eyebrow mb-1">Archive</p>
     <h2 class="mb-2">Budget Records</h2>
-    <p class="view-subtitle mb-4">
+    <p class="view-subtitle mb-3">
       Create and review budgets, lifetime totals, and monthly history. Use
       <RouterLink to="/budgets">Budgets</RouterLink> for day-to-day planning.
     </p>
 
+    <ul v-if="domain.activeProfileId" class="nav nav-tabs mb-3" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button
+          type="button"
+          class="nav-link"
+          :class="{ active: activeTab === 'budgets' }"
+          role="tab"
+          :aria-selected="activeTab === 'budgets'"
+          @click="selectTab('budgets')"
+        >
+          Budgets
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button
+          type="button"
+          class="nav-link"
+          :class="{ active: activeTab === 'history' }"
+          role="tab"
+          :aria-selected="activeTab === 'history'"
+          @click="selectTab('history')"
+        >
+          Monthly history
+        </button>
+      </li>
+    </ul>
+
     <p v-if="!domain.activeProfileId" class="status-text">
       Create a profile in Settings first.
     </p>
+
+    <BudgetMonthlyHistory v-else-if="activeTab === 'history'" />
 
     <template v-else>
       <div class="budgets-toolbar d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -160,100 +186,12 @@ function vsIncome(b: Row): string {
         </button>
         <RouterLink
           v-if="activeBudget"
-          to="/extra-income"
+          to="/budgets?extraIncome=1"
           class="btn btn-outline-secondary"
         >
           Extra income
         </RouterLink>
-        <RouterLink to="/budget-history" class="btn btn-outline-secondary">
-          Budget history
-        </RouterLink>
       </div>
-
-      <section class="card budgets-existing-card stacked-section mb-3">
-        <button
-          type="button"
-          class="budgets-existing-toggle"
-          :class="{ 'budgets-existing-toggle--expanded': existingBudgetsExpanded }"
-          :aria-expanded="existingBudgetsExpanded"
-          aria-controls="existingBudgetsPanel"
-          id="existingBudgetsToggle"
-          @click="toggleExistingBudgets"
-        >
-          <div class="budgets-existing-toggle-main">
-            <span class="budgets-existing-toggle-icon" aria-hidden="true">
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-              </svg>
-            </span>
-            <div class="budgets-existing-toggle-text">
-              <span class="budgets-existing-toggle-title">Your budgets</span>
-              <span class="budgets-existing-toggle-meta">
-                {{ budgets.length === 0 ? 'None yet' : `${budgets.length} saved` }}
-              </span>
-            </div>
-          </div>
-          <span
-            class="budgets-collapse-chevron"
-            :class="{ 'budgets-collapse-chevron--collapsed': !existingBudgetsExpanded }"
-            aria-hidden="true"
-          />
-        </button>
-
-        <div
-          v-show="existingBudgetsExpanded"
-          id="existingBudgetsPanel"
-          class="budgets-existing-panel"
-          role="region"
-          aria-labelledby="existingBudgetsToggle"
-        >
-          <div class="card-body budgets-existing-body">
-            <div v-if="budgets.length === 0" class="budgets-existing-empty">
-              <p class="budgets-existing-empty-title mb-1">No budgets yet</p>
-              <p class="budgets-existing-empty-text mb-0">
-                Use <strong>New budget</strong> above to create your first one.
-              </p>
-            </div>
-            <ul v-else class="list-unstyled mb-0 budgets-existing-list">
-              <li v-for="b in budgets" :key="b.id" class="budgets-existing-row">
-                <div class="budgets-existing-row-inner">
-                  <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
-                    <span class="budgets-existing-name">{{ b.name }}</span>
-                    <span v-if="b.isActive" class="badge bg-success">Active</span>
-                  </div>
-                  <div class="budgets-existing-details">
-                    <span>From {{ b.startMonth }}</span>
-                    <span class="budgets-existing-dot" aria-hidden="true">·</span>
-                    <span>Income {{ b.monthlyIncome.toLocaleString() }}</span>
-                    <template v-if="b.ruleSet === 'fiftyThirtyTwenty'">
-                      <span class="budgets-existing-dot" aria-hidden="true">·</span>
-                      <span>
-                        50 / 30 / 20
-                        ({{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 50) }} /
-                        {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 30) }} /
-                        {{ formatFiftyThirtyTwentyAmount(b.monthlyIncome, 20) }})
-                      </span>
-                    </template>
-                    <template v-else>
-                      <span class="budgets-existing-dot" aria-hidden="true">·</span>
-                      <span>Custom</span>
-                    </template>
-                  </div>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </div>
-      </section>
 
       <div v-if="loading" class="budget-records-loading">
         <LoadingView message="Loading budget totals…" />
@@ -319,8 +257,7 @@ function vsIncome(b: Row): string {
       <p v-if="rows.length && !loading" class="small mt-3 mb-0 budget-records-caption">
         Total logged is the sum of every transaction for that budget (all dates). Use
         <strong>Start clean month</strong> above to wipe one month’s activity without rebuilding
-        the budget. See <RouterLink to="/budget-history">Budget History</RouterLink> for per-month
-        performance.
+        the budget. See <strong>Monthly history</strong> for per-month performance.
       </p>
     </template>
   </div>

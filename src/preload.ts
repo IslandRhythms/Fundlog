@@ -11,6 +11,8 @@ import type {
   BudgetSubcategory,
   CreditCard,
   PortfolioAccount,
+  FinancialMilestone,
+  RetirementInputs,
   AppPrefs,
 } from './shared/types';
 
@@ -299,6 +301,43 @@ export const api = {
       id: number;
       profileId: number;
     }): Promise<void> => ipcRenderer.invoke('portfolio:snapshot:delete', input),
+  },
+  milestone: {
+    listByProfile: async (profileId: number): Promise<FinancialMilestone[]> =>
+      ipcRenderer.invoke('milestone:listByProfile', { profileId }),
+    create: async (input: {
+      profileId: number;
+      title: string;
+      category?: string | null;
+      targetDate?: string | null;
+      note?: string | null;
+      achievedDate?: string | null;
+    }): Promise<FinancialMilestone> =>
+      ipcRenderer.invoke('milestone:create', input),
+    update: async (input: {
+      id: number;
+      profileId: number;
+      title: string;
+      category?: string | null;
+      targetDate?: string | null;
+      note?: string | null;
+      achievedDate?: string | null;
+    }): Promise<FinancialMilestone> =>
+      ipcRenderer.invoke('milestone:update', input),
+    setAchieved: async (input: {
+      id: number;
+      profileId: number;
+      achievedDate: string | null;
+    }): Promise<FinancialMilestone> =>
+      ipcRenderer.invoke('milestone:setAchieved', input),
+    delete: async (input: { id: number; profileId: number }): Promise<void> =>
+      ipcRenderer.invoke('milestone:delete', input),
+  },
+  retirement: {
+    get: async (profileId: number): Promise<Partial<RetirementInputs> | null> =>
+      ipcRenderer.invoke('retirement:get', { profileId }),
+    save: async (input: { profileId: number; inputs: RetirementInputs }): Promise<void> =>
+      ipcRenderer.invoke('retirement:save', input),
   },
   goal: {
     listByProfile: async (profileId: number): Promise<Goal[]> =>

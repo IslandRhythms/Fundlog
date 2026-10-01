@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { useToast } from 'vue-toastification';
 import { useDomainStore } from '../stores/domain';
+import ExtraIncomeModal from '../components/ExtraIncomeModal.vue';
+import PageTabs from '../components/PageTabs.vue';
+import { showBsModal } from '../shared/hideBsModal';
 import PlannedExpenseCategoryBar from '../components/PlannedExpenseCategoryBar.vue';
 import CollapsibleSection from '../components/CollapsibleSection.vue';
 import BudgetPieCompare from '../components/BudgetPieCompare.vue';
 import VendorPicker from '../components/VendorPicker.vue';
-import CategoryImpactList from '../components/CategoryImpactList.vue';
+import LeftoverLedger from '../components/LeftoverLedger.vue';
+import { computeLeftoverLedger } from '../shared/leftoverLedger';
 import {
   computePlannedExpenseBarSegments,
   buildPieSegments,
   plannedAmountFromSub,
   plannedTotalFromSub,
+  purchasesForSub,
 } from '../shared/plannedExpenseBar';
-import { computeCategoryImpact } from '../shared/categoryImpact';
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { formatMoney as formatMoneyExact, formatPercent } from '../shared/formatMoney';
 import { calendarMonthNow, localDateIso } from '../shared/calendarMonth';
@@ -83,10 +87,27 @@ const monthLabel = computed(() => {
   return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 });
 
+const route = useRoute();
+const router = useRouter();
+const EXTRA_INCOME_MODAL_ID = 'extraIncomeModal';
+
+type BudgetTab = 'overview' | 'lineItems' | 'left';
+const BUDGET_TABS: { key: BudgetTab; label: string }[] = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'lineItems', label: 'Line items' },
+  { key: 'left', label: 'What’s left' },
+];
+const budgetTab = ref<BudgetTab>('overview');
+
 onMounted(async () => {
   await domain.loadProfiles();
   await domain.loadBudgets();
   await loadCategories();
+  if (route.query.extraIncome) {
+    await router.replace({ query: { ...route.query, extraIncome: undefined } });
+    await nextTick();
+    showBsModal(EXTRA_INCOME_MODAL_ID);
+  }
 });
 
 const activeBudget = computed(() => domain.activeBudget);
@@ -160,7 +181,7 @@ function categoryPanelStorageKey(catId: number) {
 }
 
 function isCategoryPanelExpanded(catId: number) {
-  return categoryPanelExpanded.value[catId] === true;
+  return categoryPanelExpanded.value[catId] !== false;
 }
 
 function loadCategoryPanelStates() {
@@ -207,19 +228,39 @@ function categoryUsedPct(cat: BudgetCategory) {
   return Math.min(100, (bucket.committed / bucket.targetAmount) * 100);
 }
 
-/** Purchases logged against this category this month (reduces "left"). */
-function categoryPurchases(cat: BudgetCategory) {
-  return categoryBucketFor(cat)?.purchases ?? 0;
+/** Purchases + unexpected expenses logged against this category this month (reduces "left"). */
+function categorySpent(cat: BudgetCategory) {
+  const bucket = categoryBucketFor(cat);
+  return (bucket?.purchases ?? 0) + (bucket?.unexpected ?? 0);
 }
 
-/** Unexpected expenses logged against this category this month (reduces "left"). */
-function categoryUnexpected(cat: BudgetCategory) {
-  return categoryBucketFor(cat)?.unexpected ?? 0;
+function categorySpentTitle(cat: BudgetCategory) {
+  const bucket = categoryBucketFor(cat);
+  return `${formatMoney(bucket?.purchases ?? 0)} purchases · ${formatMoney(bucket?.unexpected ?? 0)} unexpected`;
 }
 
-function categoryHasExtra(cat: BudgetCategory) {
-  return categoryPurchases(cat) > 0 || categoryUnexpected(cat) > 0;
+function categoryPlannedPct(cat: BudgetCategory) {
+  const planned = categoryBucketFor(cat)?.planned ?? 0;
+  if (!planningMonthIncome.value || planned <= 0) return 0;
+  return (planned / planningMonthIncome.value) * 100;
 }
+
+function lineItemPurchases(sub: BudgetSubcategory) {
+  return purchasesForSub(sub.id, purchaseTxs.value, viewingMonth.value);
+}
+
+const lineItemTotals = computed(() =>
+  categories.value.reduce(
+    (sum, cat) => {
+      const bucket = categoryBucketFor(cat);
+      return {
+        planned: sum.planned + (bucket?.planned ?? 0),
+        spent: sum.spent + categorySpent(cat),
+      };
+    },
+    { planned: 0, spent: 0 },
+  ),
+);
 
 const plannedBarResult = computed(() =>
   computePlannedExpenseBarSegments(
@@ -238,35 +279,52 @@ const headroom = computed(() =>
   computeBudgetHeadroom(categories.value, plannedBarResult.value, planningMonthIncome.value),
 );
 
-const categoryImpact = computed(() =>
-  computeCategoryImpact(
+const leftoverLedger = computed(() =>
+  computeLeftoverLedger(
     categories.value,
-    groupedSubcategories.value,
     subcategories.value,
     purchaseTxs.value,
     unexpectedTxs.value,
+    goalContributionTxs.value,
     viewingMonth.value,
   ),
 );
 
-const anyCategoryImpact = computed(() =>
-  categoryImpact.value.some((row) => row.extra > 0),
-);
-
-const totalExtraSpend = computed(() =>
-  categoryImpact.value.reduce((sum, row) => sum + row.extra, 0),
-);
-
-/** Uncommitted leftover before purchases/unexpected: income − planned − goal savings. */
-const uncommittedPool = computed(
-  () =>
-    planningMonthIncome.value -
-    plannedBarResult.value.totalPlanned -
-    plannedBarResult.value.totalGoalSavings,
-);
-
 const pieSegments = computed(() =>
   buildPieSegments(plannedBarResult.value, planningMonthIncome.value),
+);
+
+const allocationRows = computed(() =>
+  plannedBarResult.value.categoryParts.map((part) => {
+    const spent = part.purchases + part.unexpected;
+    return {
+      categoryId: part.categoryId,
+      label: part.label,
+      color: part.color,
+      planned: part.planned,
+      spent,
+      goalSavings: part.goalSavings,
+      total: part.planned + spent + part.goalSavings,
+      pctOfIncome: part.pctOfIncome,
+    };
+  }),
+);
+
+const allocationTotals = computed(() =>
+  allocationRows.value.reduce(
+    (sum, row) => ({
+      planned: sum.planned + row.planned,
+      spent: sum.spent + row.spent,
+      goalSavings: sum.goalSavings + row.goalSavings,
+      total: sum.total + row.total,
+    }),
+    { planned: 0, spent: 0, goalSavings: 0, total: 0 },
+  ),
+);
+
+/** Positive when committed exceeds income (the pie scales slices down to fit). */
+const allocationOverIncome = computed(
+  () => allocationTotals.value.total - planningMonthIncome.value,
 );
 
 const allocationTargetCaption = computed(() => {
@@ -521,130 +579,134 @@ async function submitSubcategory(category: BudgetCategory) {
         <RouterLink to="/budget-records">Budget Records</RouterLink>
         to start planning.
       </p>
-      <p v-else class="budgets-page-header__meta">
-        Planning <strong>{{ activeBudget.name }}</strong>
-        <span class="budgets-existing-dot" aria-hidden="true">·</span>
-        <RouterLink to="/budget-records">Manage budgets</RouterLink>
-      </p>
+      <div
+        v-else
+        class="budgets-page-header__meta d-flex flex-wrap align-items-center gap-2"
+      >
+        <span>Planning <strong>{{ activeBudget.name }}</strong></span>
+        <RouterLink to="/budget-records" class="btn btn-sm btn-outline-secondary py-0">
+          Manage budgets
+        </RouterLink>
+      </div>
     </header>
 
     <div v-if="activeBudget" class="row g-3">
       <div v-if="upcomingDues.length" class="col-12">
         <div class="card border shadow-none">
-          <div class="card-body p-3">
-            <h3 class="h6 mb-2">Upcoming dues (30 days)</h3>
-            <ul class="list-unstyled mb-0 vstack gap-2">
-              <li
-                v-for="due in upcomingDues"
-                :key="due.subcategoryId"
-                class="d-flex flex-wrap justify-content-between gap-2 small"
-              >
-                <span>
-                  <strong>{{ due.label }}</strong>
-                  · due {{ due.dueDate }}
-                  <span class="text-muted">
-                    ({{ due.daysUntil === 0 ? 'today' : `in ${due.daysUntil}d` }})
-                  </span>
-                </span>
-                <span class="text-nowrap">
-                  {{ formatMoney(due.amount) }}
-                  <span class="text-muted">cycle</span>
-                </span>
-              </li>
-            </ul>
+          <div class="card-body px-3 py-2 d-flex flex-wrap align-items-center gap-2 small">
+            <span class="fw-semibold">Upcoming dues (30 days):</span>
+            <span
+              v-for="due in upcomingDues"
+              :key="due.subcategoryId"
+              class="border rounded-pill px-2 py-1 bg-body-tertiary text-nowrap"
+              :title="`Due ${due.dueDate} · ${formatMoney(due.amount)} per cycle`"
+            >
+              {{ due.label }} · {{ formatMoney(due.amount) }} ·
+              {{ due.daysUntil === 0 ? 'today' : `in ${due.daysUntil}d` }}
+            </span>
           </div>
         </div>
       </div>
-      <div class="col-12">
-        <CollapsibleSection
-          class="budgets-planning-panel"
-          title="Income allocation"
-          :meta="`Compare plan vs target · ${monthLabel}`"
-          storage-key="budgets-allocation-compare"
-        >
-          <BudgetPieCompare
-            v-if="categories.length"
-            :categories="categories"
-            :actual-segments="pieSegments"
-            :income="planningMonthIncome"
-            :currency-code="currencyCode()"
-            actual-caption="Planned, unexpected, and goal savings"
-            :target-caption="allocationTargetCaption"
-          />
-          <p v-else class="small mb-0">
-            Add expenses to see your spending mix.
-          </p>
-        </CollapsibleSection>
-      </div>
 
       <div class="col-12">
+        <PageTabs
+          v-model="budgetTab"
+          :tabs="BUDGET_TABS"
+          storage-key="budgets"
+          label="Budget sections"
+        />
+      </div>
+
+      <div v-if="budgetTab === 'lineItems'" class="col-12">
         <CollapsibleSection
           title="Line items by category"
           :meta="`${formatMoney(headroom.moneyLeft)} left of ${formatMoney(planningMonthIncome)} · ${monthLabel}`"
-          :default-expanded="false"
           storage-key="budgets-line-items"
         >
           <p class="line-items-intro mb-2">
             You have <strong>{{ formatMoney(headroom.moneyLeft) }}</strong> left of your
             {{ formatMoney(planningMonthIncome) }} to work with this month — planned amounts,
-            purchases, unexpected expenses, and goal savings all draw it down. Each bucket shows
-            budget health at a glance — expand a card to log purchases or edit expenses. Unexpected
-            spending goes on <RouterLink to="/expenses">Expenses</RouterLink>.
+            purchases, unexpected expenses, and goal savings all draw it down. Click a category
+            row to show or hide its line items. Unexpected spending goes on
+            <RouterLink to="/expenses">Expenses</RouterLink>.
           </p>
-          <div class="budget-categories">
-              <section
-                v-for="cat in categories"
-                :key="cat.id"
-                class="budget-category-panel"
-                :class="{
-                  'budget-category-panel--over': (categoryBucketFor(cat)?.remaining ?? 0) < 0,
-                  'budget-category-panel--collapsed': !isCategoryPanelExpanded(cat.id),
-                }"
-                :style="{ '--category-accent': cat.color }"
-              >
-                <header class="budget-category-panel__header">
-                  <button
-                    type="button"
-                    class="budget-category-panel__toggle"
-                    :aria-expanded="isCategoryPanelExpanded(cat.id)"
-                    :aria-controls="`budget-category-panel-${cat.id}`"
-                    @click="toggleCategoryPanel(cat.id)"
+          <div class="budgets-table-wrap">
+            <table class="table align-middle budgets-table">
+              <thead>
+                <tr>
+                  <th scope="col">Expense</th>
+                  <th scope="col" class="budgets-table__num">Planned / mo</th>
+                  <th scope="col" class="budgets-table__num">% income</th>
+                  <th
+                    scope="col"
+                    class="budgets-table__num"
+                    title="Purchases and unexpected expenses this month"
                   >
-                    <div class="budget-category-panel__identity">
-                      <span class="budget-category-panel__swatch" aria-hidden="true" />
-                      <div class="budget-category-panel__titles">
-                        <h3 class="budget-category-panel__title">{{ cat.label }}</h3>
-                        <p class="budget-category-panel__target">
-                          {{ cat.targetPercent }}% income ·
-                          {{ categoryLineCount(cat.id) }}
-                          {{ categoryLineCount(cat.id) === 1 ? 'expense' : 'expenses' }}
-                        </p>
-                      </div>
-                    </div>
-                    <div
-                      class="budget-category-panel__hero"
-                      :class="{
-                        'budget-category-panel__hero--over':
-                          (categoryBucketFor(cat)?.remaining ?? 0) < 0,
-                      }"
+                    Spent
+                  </th>
+                  <th scope="col" class="budgets-table__num">Left</th>
+                  <th scope="col" class="budgets-table__num">
+                    <span class="visually-hidden">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody v-for="cat in categories" :key="cat.id">
+                <tr
+                  class="budgets-table__group"
+                  :style="{ '--category-accent': cat.color }"
+                >
+                  <th scope="rowgroup">
+                    <button
+                      type="button"
+                      class="btn btn-link p-0 text-reset text-decoration-none fw-semibold d-inline-flex align-items-center gap-2 text-nowrap"
+                      :aria-expanded="isCategoryPanelExpanded(cat.id)"
+                      @click="toggleCategoryPanel(cat.id)"
                     >
-                      <span class="budget-category-panel__hero-value">
-                        {{ formatMoney(categoryBucketFor(cat)?.remaining ?? 0) }}
-                      </span>
-                      <span class="budget-category-panel__hero-label">left</span>
+                      <span
+                        class="budgets-collapse-chevron"
+                        :class="{
+                          'budgets-collapse-chevron--collapsed': !isCategoryPanelExpanded(cat.id),
+                        }"
+                        aria-hidden="true"
+                      />
+                      <span
+                        class="budgets-table__swatch rounded-circle"
+                        :style="{ backgroundColor: cat.color }"
+                        aria-hidden="true"
+                      />
+                      {{ cat.label }}
+                    </button>
+                    <div class="budgets-table__sub">
+                      {{ cat.targetPercent }}% target ·
+                      {{ categoryLineCount(cat.id) }}
+                      {{ categoryLineCount(cat.id) === 1 ? 'item' : 'items' }}
                     </div>
+                  </th>
+                  <td class="budgets-table__num fw-semibold">
+                    {{ formatMoney(categoryBucketFor(cat)?.planned ?? 0) }}
+                  </td>
+                  <td class="budgets-table__num">
+                    {{ formatPercent(categoryPlannedPct(cat)) }}%
+                  </td>
+                  <td
+                    class="budgets-table__num"
+                    :class="{ 'budgets-table__zero': categorySpent(cat) <= 0 }"
+                    :title="categorySpentTitle(cat)"
+                  >
+                    {{ formatMoney(categorySpent(cat)) }}
+                  </td>
+                  <td class="budgets-table__num">
                     <span
-                      class="budgets-collapse-chevron budget-category-panel__chevron"
-                      :class="{
-                        'budgets-collapse-chevron--collapsed': !isCategoryPanelExpanded(cat.id),
-                      }"
-                      aria-hidden="true"
-                    />
-                  </button>
-
-                  <div class="budget-category-panel__meter-wrap">
+                      class="fw-semibold"
+                      :class="{ 'text-danger': (categoryBucketFor(cat)?.remaining ?? 0) < 0 }"
+                    >
+                      {{ formatMoney(categoryBucketFor(cat)?.remaining ?? 0) }}
+                    </span>
+                    <div class="budgets-table__sub">
+                      of {{ formatMoney(categoryBucketFor(cat)?.targetAmount ?? 0) }}
+                    </div>
                     <div
-                      class="budget-category-panel__meter"
+                      class="progress budgets-table__meter mt-1"
                       role="progressbar"
                       :aria-valuenow="categoryUsedPct(cat)"
                       aria-valuemin="0"
@@ -652,144 +714,85 @@ async function submitSubcategory(category: BudgetCategory) {
                       :aria-label="`${cat.label} budget used`"
                     >
                       <div
-                        class="budget-category-panel__meter-fill"
-                        :style="{
-                          width: categoryUsedPct(cat) + '%',
-                          backgroundColor: cat.color,
-                        }"
+                        class="progress-bar"
+                        :style="{ width: categoryUsedPct(cat) + '%', backgroundColor: cat.color }"
                       />
                     </div>
-                    <span class="budget-category-panel__meter-label">
-                      {{ formatPercent(categoryUsedPct(cat)) }}% used
-                    </span>
-                  </div>
-
-                  <div class="budget-category-panel__strip">
-                    <span>
-                      Budget
-                      <strong>{{ formatMoney(categoryBucketFor(cat)?.targetAmount ?? 0) }}</strong>
-                    </span>
-                    <span>
-                      Committed
-                      <strong>{{ formatMoney(categoryBucketFor(cat)?.committed ?? 0) }}</strong>
-                    </span>
-                  </div>
-
-                  <p
-                    v-if="categoryHasExtra(cat)"
-                    class="budget-category-panel__extra small mb-0"
-                  >
-                    <span class="budget-category-panel__extra-label">Already spent, lowering what's left:</span>
-                    <span
-                      v-if="categoryPurchases(cat) > 0"
-                      class="budget-category-panel__extra-purchase"
+                  </td>
+                  <td class="budgets-table__num">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary"
+                      @click="startAddFor(cat.id)"
                     >
-                      −{{ formatMoney(categoryPurchases(cat)) }} purchases
-                    </span>
-                    <span
-                      v-if="categoryPurchases(cat) > 0 && categoryUnexpected(cat) > 0"
-                      aria-hidden="true"
-                    >
-                      ·
-                    </span>
-                    <span
-                      v-if="categoryUnexpected(cat) > 0"
-                      class="budget-category-panel__extra-unexpected"
-                    >
-                      −{{ formatMoney(categoryUnexpected(cat)) }} unexpected
-                    </span>
-                  </p>
-                </header>
-
-                <div
-                  v-show="isCategoryPanelExpanded(cat.id)"
-                  :id="`budget-category-panel-${cat.id}`"
-                  class="budget-category-panel__body"
-                >
-                  <div class="table-responsive budget-line-table-wrap">
-                    <table class="table budget-line-table align-middle mb-0">
-                      <thead>
-                        <tr>
-                          <th scope="col" class="budget-line-table__th-expense">Expense</th>
-                          <th scope="col" class="text-end budget-line-table__th-num">Planned / mo</th>
-                          <th scope="col" class="text-end budget-line-table__th-num">% income</th>
-                          <th scope="col" class="text-end budget-line-table__th-actions">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                      + Add
+                    </button>
+                  </td>
+                </tr>
+                <template v-if="isCategoryPanelExpanded(cat.id)">
                         <template
                           v-for="sub in groupedSubcategories[cat.id] || []"
                           :key="sub.id"
                         >
                           <tr
                             v-if="editingSubId !== sub.id && loggingPurchaseSubId !== sub.id"
-                            class="budget-line-row"
+                            class="budgets-table__line"
                           >
-                            <td class="budget-line-row__expense">
-                              <div class="budget-line-row__top">
-                                <span class="budget-line-row__name">{{ sub.label }}</span>
-                                <span class="budget-line-row__badges">
-                                  <span class="expense-type-badge">
-                                    {{ sub.isFlexible ? 'Variable' : 'Fixed' }}
-                                  </span>
-                                  <span
-                                    v-if="(sub.spreadMonths ?? 1) > 1"
-                                    class="expense-spread-badge"
-                                  >
-                                    every {{ sub.spreadMonths }} mo
-                                  </span>
-                                </span>
+                            <td>
+                              {{ sub.label }}
+                              <div class="budgets-table__sub">
+                                {{ sub.isFlexible ? 'Variable' : 'Fixed' }}
+                                <template v-if="lineItemPlannedNote(sub)">
+                                  · {{ lineItemPlannedNote(sub) }}
+                                </template>
                               </div>
-                              <p
-                                v-if="lineItemPlannedNote(sub)"
-                                class="budget-line-row__note"
-                                :title="lineItemPlannedNote(sub) ?? undefined"
-                              >
-                                {{ lineItemPlannedNote(sub) }}
-                              </p>
                             </td>
-                            <td class="text-end budget-line-row__planned">
-                              <span class="budget-line-row__money">
-                                {{ lineItemPlannedPrimary(sub) }}
-                              </span>
-                              <span class="budget-line-row__suffix">
+                            <td class="budgets-table__num">
+                              {{ lineItemPlannedPrimary(sub) }}
+                              <div class="budgets-table__sub">
                                 {{ lineItemPlannedSuffix(sub) }}
-                              </span>
+                              </div>
                             </td>
-                            <td class="text-end budget-line-row__pct">
+                            <td class="budgets-table__num">
                               {{ formatPercent(percentOfBudget(sub)) }}%
                             </td>
-                            <td class="text-end budget-line-table__actions-cell">
-                              <div class="budget-line-actions">
-                                <button
-                                  type="button"
-                                  class="btn btn-sm budget-line-action budget-line-action--log"
-                                  @click="startLogPurchase(sub)"
-                                >
-                                  Log
-                                </button>
-                                <button
-                                  type="button"
-                                  class="btn btn-sm budget-line-action budget-line-action--edit"
-                                  @click="startEditSub(sub)"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  class="btn btn-sm budget-line-action budget-line-action--remove"
-                                  @click="deleteSubcategoryItem(sub)"
-                                >
-                                  Remove
-                                </button>
-                              </div>
+                            <td
+                              class="budgets-table__num"
+                              :class="{ 'budgets-table__zero': lineItemPurchases(sub) <= 0 }"
+                              title="Purchases logged on this line this month"
+                            >
+                              {{ formatMoney(lineItemPurchases(sub)) }}
+                            </td>
+                            <td />
+                            <td class="budgets-table__num">
+                              <button
+                                type="button"
+                                class="btn btn-link btn-sm px-1 text-decoration-none"
+                                @click="startLogPurchase(sub)"
+                              >
+                                Log
+                              </button>
+                              <button
+                                type="button"
+                                class="btn btn-link btn-sm px-1 text-decoration-none link-secondary"
+                                @click="startEditSub(sub)"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                class="btn btn-link btn-sm px-1 text-decoration-none link-danger"
+                                @click="deleteSubcategoryItem(sub)"
+                              >
+                                Remove
+                              </button>
                             </td>
                           </tr>
                           <tr
                             v-else-if="loggingPurchaseSubId === sub.id"
-                            class="budget-line-row budget-line-row--form"
+                            class="budgets-table__form"
                           >
-                            <td colspan="4">
+                            <td colspan="6">
                               <form
                                 class="category-line-form budget-line-form"
                                 @submit.prevent="submitPurchase(sub)"
@@ -856,8 +859,8 @@ async function submitSubcategory(category: BudgetCategory) {
                               </form>
                             </td>
                           </tr>
-                          <tr v-else class="budget-line-row budget-line-row--form">
-                            <td colspan="4">
+                          <tr v-else class="budgets-table__form">
+                            <td colspan="6">
                               <form
                                 class="category-line-form budget-line-form"
                                 @submit.prevent="submitEditSubcategory(cat)"
@@ -1012,27 +1015,21 @@ async function submitSubcategory(category: BudgetCategory) {
                           </tr>
                         </template>
 
-                        <tr v-if="!(groupedSubcategories[cat.id] || []).length">
-                          <td colspan="4" class="budget-line-table__empty">
-                            No line items yet — add expenses to see how this bucket fills up.
+                        <tr
+                          v-if="
+                            !(groupedSubcategories[cat.id] || []).length &&
+                            editingCategoryId !== cat.id
+                          "
+                        >
+                          <td colspan="6" class="budgets-table__empty">
+                            No line items yet — use + Add to plan an expense here.
                           </td>
                         </tr>
-                      </tbody>
-                    </table>
-                  </div>
 
-                  <footer class="budget-category-panel__footer">
-                <button
-                  type="button"
-                  class="btn btn-sm budget-category-panel__add"
-                  @click="startAddFor(cat.id)"
-                >
-                  + Add expense
-                </button>
-
+                <tr v-if="editingCategoryId === cat.id" class="budgets-table__form">
+                <td colspan="6">
                 <form
-                  v-if="editingCategoryId === cat.id"
-                  class="category-line-form budget-line-form budget-category-panel__add-form"
+                  class="category-line-form budget-line-form"
                   @submit.prevent="submitSubcategory(cat)"
                 >
                   <div class="category-line-form__full">
@@ -1191,14 +1188,44 @@ async function submitSubcategory(category: BudgetCategory) {
                     <button type="submit" class="btn btn-sm btn-success">Save expense</button>
                   </div>
                 </form>
-                  </footer>
-                </div>
-              </section>
+                </td>
+                </tr>
+                </template>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Total</th>
+                  <td class="budgets-table__num">
+                    {{ formatMoney(lineItemTotals.planned) }}
+                  </td>
+                  <td class="budgets-table__num">
+                    {{
+                      planningMonthIncome > 0
+                        ? `${formatPercent((lineItemTotals.planned / planningMonthIncome) * 100)}%`
+                        : '—'
+                    }}
+                  </td>
+                  <td class="budgets-table__num">
+                    {{ formatMoney(lineItemTotals.spent) }}
+                  </td>
+                  <td
+                    class="budgets-table__num"
+                    :class="{ 'text-danger': headroom.moneyLeft < 0 }"
+                  >
+                    {{ formatMoney(headroom.moneyLeft) }}
+                    <div class="budgets-table__sub">
+                      of {{ formatMoney(planningMonthIncome) }}
+                    </div>
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </CollapsibleSection>
       </div>
 
-      <div class="col-12">
+      <div v-if="budgetTab === 'overview'" class="col-12">
         <CollapsibleSection
           class="budgets-planning-panel"
           title="Budget overview"
@@ -1209,9 +1236,14 @@ async function submitSubcategory(category: BudgetCategory) {
             <span class="small text-muted">
               Effective income {{ formatMoney(planningMonthIncome) }}
             </span>
-            <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              data-bs-toggle="modal"
+              :data-bs-target="`#${EXTRA_INCOME_MODAL_ID}`"
+            >
               Extra income
-            </RouterLink>
+            </button>
           </div>
 
           <div class="row g-3 mb-3">
@@ -1304,32 +1336,124 @@ async function submitSubcategory(category: BudgetCategory) {
         </CollapsibleSection>
       </div>
 
-      <div class="col-12">
+      <div v-if="budgetTab === 'overview'" class="col-12">
         <CollapsibleSection
-          class="budgets-planning-panel expenses-panel--impact"
-          title="Where the plan adjusts"
-          :meta="
-            anyCategoryImpact
-              ? `${formatMoney(totalExtraSpend)} extra · ${monthLabel}`
-              : 'No extra spend this month'
-          "
-          :default-expanded="false"
-          storage-key="budgets-category-impact"
+          class="budgets-planning-panel"
+          title="Income allocation"
+          :meta="`Compare plan vs target · ${monthLabel}`"
+          storage-key="budgets-allocation-compare"
         >
-          <p class="small text-muted mb-3">
-            Purchases and unexpected expenses are paid out of your uncommitted leftover (income
-            after planned amounts and goal savings). This shows which categories are eating it and
-            how much is still left.
-          </p>
-          <CategoryImpactList
-            :rows="categoryImpact"
+          <BudgetPieCompare
+            v-if="categories.length"
+            :categories="categories"
+            :actual-segments="pieSegments"
+            :income="planningMonthIncome"
             :currency-code="currencyCode()"
-            :pool="uncommittedPool"
-            empty-hint="Log a purchase or unexpected expense to see where your leftover goes."
+            actual-caption="Planned, purchases, unexpected, and goal savings"
+            :target-caption="allocationTargetCaption"
+          />
+          <template v-if="categories.length && allocationRows.length">
+            <div class="budgets-table-wrap mt-3">
+              <table class="table align-middle budgets-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Category</th>
+                    <th scope="col" class="budgets-table__num">Planned</th>
+                    <th
+                      scope="col"
+                      class="budgets-table__num"
+                      title="Purchases + unexpected expenses"
+                    >
+                      Spent
+                    </th>
+                    <th
+                      v-if="allocationTotals.goalSavings > 0"
+                      scope="col"
+                      class="budgets-table__num"
+                    >
+                      Goal savings
+                    </th>
+                    <th scope="col" class="budgets-table__num">Total</th>
+                    <th scope="col" class="budgets-table__num">% of income</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in allocationRows" :key="row.categoryId">
+                    <td>
+                      <span class="d-inline-flex align-items-center gap-2">
+                        <span
+                          class="budgets-table__swatch rounded-circle"
+                          :style="{ backgroundColor: row.color }"
+                          aria-hidden="true"
+                        />
+                        {{ row.label }}
+                      </span>
+                    </td>
+                    <td class="budgets-table__num">{{ formatMoney(row.planned) }}</td>
+                    <td
+                      class="budgets-table__num"
+                      :class="{ 'budgets-table__zero': row.spent <= 0 }"
+                    >
+                      {{ formatMoney(row.spent) }}
+                    </td>
+                    <td v-if="allocationTotals.goalSavings > 0" class="budgets-table__num">
+                      {{ formatMoney(row.goalSavings) }}
+                    </td>
+                    <td class="budgets-table__num fw-semibold">{{ formatMoney(row.total) }}</td>
+                    <td class="budgets-table__num">{{ formatPercent(row.pctOfIncome) }}%</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th scope="row">Total</th>
+                    <td class="budgets-table__num">{{ formatMoney(allocationTotals.planned) }}</td>
+                    <td class="budgets-table__num">{{ formatMoney(allocationTotals.spent) }}</td>
+                    <td v-if="allocationTotals.goalSavings > 0" class="budgets-table__num">
+                      {{ formatMoney(allocationTotals.goalSavings) }}
+                    </td>
+                    <td class="budgets-table__num">{{ formatMoney(allocationTotals.total) }}</td>
+                    <td class="budgets-table__num">
+                      {{
+                        planningMonthIncome > 0
+                          ? `${formatPercent((allocationTotals.total / planningMonthIncome) * 100)}%`
+                          : '—'
+                      }}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <p v-if="allocationOverIncome > 0.005" class="small text-danger mt-2 mb-0">
+              Over income by {{ formatMoney(allocationOverIncome) }} — the pie scales every slice
+              down to fit, so new spending barely changes its shape.
+            </p>
+            <p v-else-if="planningMonthIncome > 0" class="small text-muted mt-2 mb-0">
+              {{ formatMoney(-allocationOverIncome) }} of
+              {{ formatMoney(planningMonthIncome) }} not yet allocated.
+            </p>
+          </template>
+          <p v-else-if="!categories.length" class="small mb-0">
+            Add expenses to see your spending mix.
+          </p>
+        </CollapsibleSection>
+      </div>
+
+      <div v-if="budgetTab === 'left'" class="col-12">
+        <CollapsibleSection
+          class="budgets-planning-panel"
+          title="What's reducing what's left"
+          :meta="`${formatMoney(headroom.moneyLeft)} left · ${leftoverLedger.length} ${leftoverLedger.length === 1 ? 'entry' : 'entries'} · ${monthLabel}`"
+          storage-key="budgets-leftover-ledger"
+        >
+          <LeftoverLedger
+            :rows="leftoverLedger"
+            :income="planningMonthIncome"
+            :currency-code="currencyCode()"
           />
         </CollapsibleSection>
       </div>
     </div>
+    <ExtraIncomeModal :modal-id="EXTRA_INCOME_MODAL_ID" />
   </div>
 </template>
 

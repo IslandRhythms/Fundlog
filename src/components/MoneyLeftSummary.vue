@@ -134,9 +134,9 @@ type RingSegment = {
 const TRACK_COLOR = 'color-mix(in srgb, var(--border) 55%, var(--card-bg))';
 
 /**
- * Ring gradient: each bucket's arc is split so purchases and unexpected show in their
- * own colour while sitting inside the bucket's overall slice (e.g. a red purchase wedge
- * inside the blue Needs arc).
+ * One contiguous arc per category (planned, purchases, unexpected, and goal savings
+ * together), then unassigned or over-budget. Purchase and unexpected colours stay in
+ * the tier breakdown so they are not repeated between categories on the ring.
  */
 const ringSegments = computed((): RingSegment[] => {
   const income = props.headroom.income;
@@ -146,32 +146,12 @@ const ringSegments = computed((): RingSegment[] => {
 
   for (const bucket of props.headroom.buckets) {
     if (bucket.committed <= 0) continue;
-    const bucketColor = ringColorForRuleKey(bucket.ruleKey, bucket.color);
-    const base = bucket.planned + bucket.goalSavings;
-    if (base > 0) {
-      segments.push({
-        key: `${bucket.ruleKey}-base`,
-        label: bucket.label,
-        color: bucketColor,
-        pct: (base / income) * 100,
-      });
-    }
-    if (bucket.purchases > 0) {
-      segments.push({
-        key: `${bucket.ruleKey}-purchase`,
-        label: `${bucket.label} purchases`,
-        color: FUND_COLORS.purchase,
-        pct: (bucket.purchases / income) * 100,
-      });
-    }
-    if (bucket.unexpected > 0) {
-      segments.push({
-        key: `${bucket.ruleKey}-unexpected`,
-        label: `${bucket.label} unexpected`,
-        color: FUND_COLORS.unexpected,
-        pct: (bucket.unexpected / income) * 100,
-      });
-    }
+    segments.push({
+      key: bucket.ruleKey,
+      label: bucket.label,
+      color: ringColorForRuleKey(bucket.ruleKey, bucket.color),
+      pct: (bucket.committed / income) * 100,
+    });
   }
 
   if (props.headroom.moneyLeft > 0) {
@@ -191,63 +171,6 @@ const ringSegments = computed((): RingSegment[] => {
   }
 
   return segments;
-});
-
-/** Legend stays at bucket level, with purchase/unexpected colours called out once. */
-const ringLegend = computed((): RingSegment[] => {
-  const income = props.headroom.income;
-  if (income <= 0) return [];
-
-  const legend: RingSegment[] = [];
-  let anyPurchases = 0;
-  let anyUnexpected = 0;
-
-  for (const bucket of props.headroom.buckets) {
-    if (bucket.committed <= 0) continue;
-    legend.push({
-      key: bucket.ruleKey,
-      label: bucket.label,
-      color: ringColorForRuleKey(bucket.ruleKey, bucket.color),
-      pct: (bucket.committed / income) * 100,
-    });
-    anyPurchases += bucket.purchases;
-    anyUnexpected += bucket.unexpected;
-  }
-
-  if (anyPurchases > 0) {
-    legend.push({
-      key: 'purchases',
-      label: 'Purchases',
-      color: FUND_COLORS.purchase,
-      pct: (anyPurchases / income) * 100,
-    });
-  }
-  if (anyUnexpected > 0) {
-    legend.push({
-      key: 'unexpected',
-      label: 'Unexpected',
-      color: FUND_COLORS.unexpected,
-      pct: (anyUnexpected / income) * 100,
-    });
-  }
-
-  if (props.headroom.moneyLeft > 0) {
-    legend.push({
-      key: 'unassigned',
-      label: 'Unassigned',
-      color: FUND_COLORS.unassigned,
-      pct: (props.headroom.moneyLeft / income) * 100,
-    });
-  } else if (props.headroom.isOverCommitted) {
-    legend.push({
-      key: 'over',
-      label: 'Over budget',
-      color: FUND_COLORS.over,
-      pct: (Math.abs(props.headroom.moneyLeft) / income) * 100,
-    });
-  }
-
-  return legend;
 });
 
 const ringStyle = computed(() => {
@@ -317,12 +240,12 @@ function tierStatusClass(status: SpendingTierStatus): string {
             </div>
           </div>
           <ul
-            v-if="ringLegend.length"
+            v-if="ringSegments.length"
             class="money-left-hero__ring-legend list-unstyled mb-0"
             aria-label="Income breakdown"
           >
             <li
-              v-for="seg in ringLegend"
+              v-for="seg in ringSegments"
               :key="seg.key"
               class="money-left-hero__ring-legend-item"
             >

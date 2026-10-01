@@ -13,9 +13,14 @@ import {
 import { computeBudgetHeadroom } from '../shared/budgetHeadroom';
 import { computeTierBreakdown } from '../shared/tierBreakdown';
 import {
+  allocateLeftoverToGoals,
   goalProgressPctWithBudget,
   monthlyPlanTowardGoal,
 } from '../shared/goalBudgetProgress';
+import {
+  computeBudgetMonthPerformance,
+  previousMonthForBudget,
+} from '../shared/budgetMonthHistory';
 import { calendarMonthNow } from '../shared/calendarMonth';
 import { upcomingDuesFromSubs } from '../shared/recurringDue';
 import type {
@@ -41,6 +46,8 @@ const unexpectedTxs = ref<Transaction[]>([]);
 const purchaseTxs = ref<Transaction[]>([]);
 const goalContributionTxs = ref<Transaction[]>([]);
 const allGoalContributionTxs = ref<Transaction[]>([]);
+const prevUnexpectedTxs = ref<Transaction[]>([]);
+const prevPurchaseTxs = ref<Transaction[]>([]);
 const recentTxs = ref<Transaction[]>([]);
 const goalAllocations = ref<GoalAllocation[]>([]);
 const loading = ref(false);
@@ -68,7 +75,16 @@ async function loadCategories() {
     const month = calendarMonthNow();
     const profileId = domain.activeProfileId;
     const budgetId = activeBudget.value.id;
-    const [unexpected, purchases, goalContrib, allGoalContrib, recentPage] =
+    const prevMonth = previousMonthForBudget(activeBudget.value, month);
+    const [
+      unexpected,
+      purchases,
+      goalContrib,
+      allGoalContrib,
+      recentPage,
+      prevUnexpected,
+      prevPurchases,
+    ] =
       await Promise.all([
         window.fundlog.transaction.listUnexpected(profileId, budgetId, month),
         window.fundlog.transaction.listPurchases(profileId, budgetId, month),
@@ -81,12 +97,20 @@ async function loadCategories() {
           dateTo: `${month}-31`,
           limit: 5,
         }),
+        prevMonth
+          ? window.fundlog.transaction.listUnexpected(profileId, budgetId, prevMonth)
+          : Promise.resolve([]),
+        prevMonth
+          ? window.fundlog.transaction.listPurchases(profileId, budgetId, prevMonth)
+          : Promise.resolve([]),
       ]);
     unexpectedTxs.value = unexpected;
     purchaseTxs.value = purchases;
     goalContributionTxs.value = goalContrib;
     allGoalContributionTxs.value = allGoalContrib;
     recentTxs.value = recentPage.rows;
+    prevUnexpectedTxs.value = prevUnexpected;
+    prevPurchaseTxs.value = prevPurchases;
   } finally {
     loading.value = false;
   }
@@ -223,6 +247,31 @@ function savedTowardGoal(goalId: number): number {
     .reduce((sum, t) => sum + t.amount, 0);
 }
 
+const previousMonthLeftover = computed(() => {
+  const b = activeBudget.value;
+  const month = b ? previousMonthForBudget(b, calendarMonthNow()) : null;
+  if (!b || !month) return 0;
+  const perf = computeBudgetMonthPerformance(
+    month,
+    subcategories.value,
+    prevUnexpectedTxs.value,
+    prevPurchaseTxs.value,
+    allGoalContributionTxs.value,
+    domain.effectiveMonthlyIncomeFor(b.id, month),
+  );
+  return Math.max(0, perf.moneyLeft);
+});
+
+const leftoverByGoal = computed(() =>
+  allocateLeftoverToGoals(
+    goals.value,
+    previousMonthLeftover.value,
+    savedTowardGoal,
+    goalAllocations.value,
+    subcategories.value,
+  ),
+);
+
 function goalProgressPctRecorded(g: Goal): number {
   if (g.targetAmount <= 0) return 0;
   return Math.min(100, (savedTowardGoal(g.id) / g.targetAmount) * 100);
@@ -235,6 +284,7 @@ function goalProgressPctForBar(g: Goal): number {
     savedTowardGoal(g.id),
     goalAllocations.value,
     subcategories.value,
+    leftoverByGoal.value[g.id] ?? 0,
   );
 }
 
@@ -287,7 +337,7 @@ function activityKindDetail(tx: Transaction): string | null {
       <RouterLink to="/expenses?log=unexpected" class="btn btn-sm btn-outline-primary">
         Log unexpected
       </RouterLink>
-      <RouterLink to="/extra-income" class="btn btn-sm btn-outline-secondary">
+      <RouterLink to="/budgets?extraIncome=1" class="btn btn-sm btn-outline-secondary">
         Add income
       </RouterLink>
       <RouterLink to="/goals" class="btn btn-sm btn-outline-secondary">
@@ -425,12 +475,19 @@ function activityKindDetail(tx: Transaction): string | null {
                     {{ goalProgressPctForBar(g).toFixed(0) }}% toward target
                     <span
                       v-if="
-                        goalPlanThisMonthOnDashboard(g) > 0 &&
+                        (goalPlanThisMonthOnDashboard(g) > 0 || (leftoverByGoal[g.id] ?? 0) > 0) &&
                         savedTowardGoal(g.id) + 1e-9 < g.targetAmount
                       "
                       class="d-block text-muted"
                     >
-                      {{ goalProgressPctRecorded(g).toFixed(0) }}% recorded; bar includes linked plan
+                      {{ goalProgressPctRecorded(g).toFixed(0) }}% recorded; bar includes
+                      {{
+                        goalPlanThisMonthOnDashboard(g) > 0 && (leftoverByGoal[g.id] ?? 0) > 0
+                          ? 'linked plan and last month’s leftover'
+                          : goalPlanThisMonthOnDashboard(g) > 0
+                            ? 'linked plan'
+                            : 'last month’s leftover'
+                      }}
                     </span>
                   </div>
                 </div>

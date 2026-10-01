@@ -406,13 +406,13 @@ async function removeSnapshot(snapshotId: number, accountId: number) {
                   </p>
                 </div>
                 <div
-                  class="btn-group btn-group-sm flex-shrink-0"
+                  class="d-flex flex-wrap gap-2 flex-shrink-0"
                   role="group"
                   aria-label="Account actions"
                 >
                   <button
                     type="button"
-                    class="btn btn-outline-primary"
+                    class="btn btn-sm btn-outline-primary"
                     data-bs-toggle="modal"
                     data-bs-target="#logPortfolioValueModal"
                     @click="openLogValueModal(account.id)"
@@ -421,7 +421,7 @@ async function removeSnapshot(snapshotId: number, accountId: number) {
                   </button>
                   <button
                     type="button"
-                    class="btn btn-outline-secondary"
+                    class="btn btn-sm btn-outline-secondary"
                     data-bs-toggle="modal"
                     data-bs-target="#editPortfolioAccountModal"
                     @click="openEditAccountModal(account)"
@@ -430,7 +430,7 @@ async function removeSnapshot(snapshotId: number, accountId: number) {
                   </button>
                   <button
                     type="button"
-                    class="btn btn-outline-danger"
+                    class="btn btn-sm btn-outline-danger"
                     @click="removeAccount(account.id)"
                   >
                     Remove

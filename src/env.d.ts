@@ -260,6 +260,43 @@ interface Window {
         profileId: number;
       }): Promise<void>;
     };
+    milestone: {
+      listByProfile(
+        profileId: number,
+      ): Promise<import('./shared/types').FinancialMilestone[]>;
+      create(input: {
+        profileId: number;
+        title: string;
+        category?: string | null;
+        targetDate?: string | null;
+        note?: string | null;
+        achievedDate?: string | null;
+      }): Promise<import('./shared/types').FinancialMilestone>;
+      update(input: {
+        id: number;
+        profileId: number;
+        title: string;
+        category?: string | null;
+        targetDate?: string | null;
+        note?: string | null;
+        achievedDate?: string | null;
+      }): Promise<import('./shared/types').FinancialMilestone>;
+      setAchieved(input: {
+        id: number;
+        profileId: number;
+        achievedDate: string | null;
+      }): Promise<import('./shared/types').FinancialMilestone>;
+      delete(input: { id: number; profileId: number }): Promise<void>;
+    };
+    retirement: {
+      get(
+        profileId: number,
+      ): Promise<Partial<import('./shared/types').RetirementInputs> | null>;
+      save(input: {
+        profileId: number;
+        inputs: import('./shared/types').RetirementInputs;
+      }): Promise<void>;
+    };
     goal: {
       listByProfile(profileId: number): Promise<import('./shared/types').Goal[]>;
       create(input: {

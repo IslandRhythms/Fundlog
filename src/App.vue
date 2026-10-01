@@ -25,7 +25,6 @@ const navSections: NavSection[] = [
     items: [
       { path: '/budgets', label: 'Budgets' },
       { path: '/budget-records', label: 'Budget Records' },
-      { path: '/budget-history', label: 'Budget History' },
     ],
   },
   {
@@ -33,13 +32,14 @@ const navSections: NavSection[] = [
     items: [
       { path: '/goals', label: 'Goals' },
       { path: '/expenses', label: 'Expenses' },
-      { path: '/extra-income', label: 'Extra income' },
     ],
   },
   {
     heading: 'Finances',
     items: [
       { path: '/portfolio-snapshot', label: 'Portfolio Snapshot' },
+      { path: '/milestones', label: 'Milestones' },
+      { path: '/retirement', label: 'Retirement Calculator' },
       { path: '/cards', label: 'Cards' },
     ],
   },

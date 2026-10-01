@@ -14,6 +14,8 @@ import {
   type CreditCardPerk,
   type PortfolioAccount,
   type PortfolioSnapshot,
+  type FinancialMilestone,
+  type RetirementInputs,
 } from '../shared/types.js';
 import { errorMessageFromUnknown } from '../shared/errors.js';
 
@@ -1733,6 +1735,151 @@ export const PortfolioAccountRepository = {
         'UPDATE portfolio_accounts SET updated_at = ? WHERE id = ?',
       )
       .run(now(), existing.accountId);
+  },
+};
+
+const MILESTONE_COLS = `id, profile_id AS profileId, title, category,
+                target_date AS targetDate, note, achieved_date AS achievedDate,
+                sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt`;
+
+type MilestoneInput = {
+  profileId: number;
+  title: string;
+  category?: string | null;
+  targetDate?: string | null;
+  note?: string | null;
+  achievedDate?: string | null;
+};
+
+function optionalIsoDate(date: string | null | undefined): string | null {
+  const trimmed = date?.trim();
+  return trimmed ? assertIsoDate(trimmed) : null;
+}
+
+function milestoneParams(input: MilestoneInput) {
+  const title = input.title.trim();
+  if (!title) throw new Error('Milestone title is required.');
+  return {
+    profileId: input.profileId,
+    title,
+    category: input.category?.trim() || null,
+    targetDate: optionalIsoDate(input.targetDate),
+    note: input.note?.trim() || null,
+    achievedDate: optionalIsoDate(input.achievedDate),
+  };
+}
+
+export const FinancialMilestoneRepository = {
+  getById(id: number, profileId: number): FinancialMilestone {
+    const row: FinancialMilestone | undefined = db()
+      .prepare(
+        `SELECT ${MILESTONE_COLS} FROM financial_milestones
+         WHERE id = ? AND profile_id = ?`,
+      )
+      .get(id, profileId);
+    if (!row) throw new Error('Milestone not found.');
+    return row;
+  },
+
+  listByProfile(profileId: number): FinancialMilestone[] {
+    return db()
+      .prepare(
+        `SELECT ${MILESTONE_COLS} FROM financial_milestones
+         WHERE profile_id = ?
+         ORDER BY sort_order ASC, id ASC`,
+      )
+      .all(profileId);
+  },
+
+  create(input: MilestoneInput): FinancialMilestone {
+    const params = milestoneParams(input);
+    const createdAt = now();
+    const maxSort: { m: number } = db()
+      .prepare(
+        'SELECT COALESCE(MAX(sort_order), -1) AS m FROM financial_milestones WHERE profile_id = ?',
+      )
+      .get(input.profileId);
+    const result = db()
+      .prepare(
+        `INSERT INTO financial_milestones
+         (profile_id, title, category, target_date, note, achieved_date, sort_order, created_at, updated_at)
+         VALUES (@profileId, @title, @category, @targetDate, @note, @achievedDate, @sortOrder, @createdAt, @createdAt)`,
+      )
+      .run({ ...params, sortOrder: maxSort.m + 1, createdAt });
+    return this.getById(Number(result.lastInsertRowid), input.profileId);
+  },
+
+  update(input: MilestoneInput & { id: number }): FinancialMilestone {
+    this.getById(input.id, input.profileId);
+    db()
+      .prepare(
+        `UPDATE financial_milestones
+         SET title = @title, category = @category, target_date = @targetDate,
+             note = @note, achieved_date = @achievedDate, updated_at = @updatedAt
+         WHERE id = @id AND profile_id = @profileId`,
+      )
+      .run({ ...milestoneParams(input), id: input.id, updatedAt: now() });
+    return this.getById(input.id, input.profileId);
+  },
+
+  setAchieved(input: {
+    id: number;
+    profileId: number;
+    achievedDate: string | null;
+  }): FinancialMilestone {
+    this.getById(input.id, input.profileId);
+    db()
+      .prepare(
+        `UPDATE financial_milestones
+         SET achieved_date = @achievedDate, updated_at = @updatedAt
+         WHERE id = @id AND profile_id = @profileId`,
+      )
+      .run({
+        id: input.id,
+        profileId: input.profileId,
+        achievedDate: optionalIsoDate(input.achievedDate),
+        updatedAt: now(),
+      });
+    return this.getById(input.id, input.profileId);
+  },
+
+  delete(input: { id: number; profileId: number }): void {
+    this.getById(input.id, input.profileId);
+    db()
+      .prepare('DELETE FROM financial_milestones WHERE id = ? AND profile_id = ?')
+      .run(input.id, input.profileId);
+  },
+};
+
+export const RetirementPlanRepository = {
+  /** Saved inputs for the profile; fields added later may be missing from older saves. */
+  get(profileId: number): Partial<RetirementInputs> | null {
+    const row: { inputsJson: string } | undefined = db()
+      .prepare('SELECT inputs_json AS inputsJson FROM retirement_plans WHERE profile_id = ?')
+      .get(profileId);
+    if (!row) return null;
+    try {
+      const parsed: Partial<RetirementInputs> = JSON.parse(row.inputsJson);
+      return parsed;
+    } catch {
+      return null;
+    }
+  },
+
+  save(input: { profileId: number; inputs: RetirementInputs }): void {
+    db()
+      .prepare(
+        `INSERT INTO retirement_plans (profile_id, inputs_json, updated_at)
+         VALUES (@profileId, @inputsJson, @updatedAt)
+         ON CONFLICT(profile_id) DO UPDATE SET
+           inputs_json = excluded.inputs_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run({
+        profileId: input.profileId,
+        inputsJson: JSON.stringify(input.inputs),
+        updatedAt: now(),
+      });
   },
 };
 

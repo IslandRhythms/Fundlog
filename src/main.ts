@@ -26,8 +26,10 @@ import {
   ReceiptRepository,
   CreditCardRepository,
   PortfolioAccountRepository,
+  FinancialMilestoneRepository,
+  RetirementPlanRepository,
 } from './main-process/repositories';
-import type { AppPrefs, Transaction, Receipt } from './shared/types';
+import type { AppPrefs, Transaction, Receipt, RetirementInputs } from './shared/types';
 
 if (started) {
   app.quit();
@@ -702,6 +704,73 @@ ipcMain.handle(
   'portfolio:snapshot:delete',
   (_event, args: { id: number; profileId: number }) => {
     PortfolioAccountRepository.deleteSnapshot(args);
+  },
+);
+
+ipcMain.handle(
+  'milestone:listByProfile',
+  (_event, args: { profileId: number }) => {
+    return FinancialMilestoneRepository.listByProfile(args.profileId);
+  },
+);
+
+ipcMain.handle(
+  'milestone:create',
+  (
+    _event,
+    args: {
+      profileId: number;
+      title: string;
+      category?: string | null;
+      targetDate?: string | null;
+      note?: string | null;
+      achievedDate?: string | null;
+    },
+  ) => {
+    return FinancialMilestoneRepository.create(args);
+  },
+);
+
+ipcMain.handle(
+  'milestone:update',
+  (
+    _event,
+    args: {
+      id: number;
+      profileId: number;
+      title: string;
+      category?: string | null;
+      targetDate?: string | null;
+      note?: string | null;
+      achievedDate?: string | null;
+    },
+  ) => {
+    return FinancialMilestoneRepository.update(args);
+  },
+);
+
+ipcMain.handle(
+  'milestone:setAchieved',
+  (_event, args: { id: number; profileId: number; achievedDate: string | null }) => {
+    return FinancialMilestoneRepository.setAchieved(args);
+  },
+);
+
+ipcMain.handle(
+  'milestone:delete',
+  (_event, args: { id: number; profileId: number }) => {
+    FinancialMilestoneRepository.delete(args);
+  },
+);
+
+ipcMain.handle('retirement:get', (_event, args: { profileId: number }) => {
+  return RetirementPlanRepository.get(args.profileId);
+});
+
+ipcMain.handle(
+  'retirement:save',
+  (_event, args: { profileId: number; inputs: RetirementInputs }) => {
+    RetirementPlanRepository.save(args);
   },
 );
 

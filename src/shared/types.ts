@@ -176,6 +176,37 @@ export interface PortfolioAccount {
   snapshots: PortfolioSnapshot[];
 }
 
+/** A life/financial milestone the user checks off once reached (e.g. buying a house). */
+export interface FinancialMilestone {
+  id: number;
+  profileId: number;
+  title: string;
+  category: string | null;
+  targetDate: string | null; // YYYY-MM-DD
+  note: string | null;
+  /** YYYY-MM-DD the milestone was reached; null while still in progress. */
+  achievedDate: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Retirement calculator inputs, saved per profile. Amounts are in today's dollars. */
+export interface RetirementInputs {
+  currentAge: number;
+  retirementAge: number;
+  currentInvested: number;
+  annualContribution: number;
+  annualSpending: number;
+  leanAnnualSpending: number;
+  fatAnnualSpending: number;
+  /** Part-time income in retirement that offsets withdrawals (Barista FIRE). */
+  baristaAnnualIncome: number;
+  expectedReturnPct: number;
+  inflationPct: number;
+  withdrawalRatePct: number;
+}
+
 /** Optional overrides for CSS variables (hex or any valid CSS color). */
 export type CustomThemeColors = Partial<{
   bg: string;
